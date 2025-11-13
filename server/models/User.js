@@ -32,6 +32,10 @@ const userSchema = new mongoose.Schema(
     assignedAC: {
       type: Number,
     },
+    aci_name: {
+      type: String,
+      trim: true,
+    },
     isActive: {
       type: Boolean,
       default: true,

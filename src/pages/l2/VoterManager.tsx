@@ -32,7 +32,12 @@ interface Pagination {
 
 export const VoterManager = () => {
   const { user } = useAuth();
-  const acNumber = user?.assignedAC || 119;
+  const fallbackAcIdentifier = "119";
+  const acIdentifier =
+    (user?.aciName && user.aciName.trim()) ||
+    (user?.assignedAC !== undefined && user?.assignedAC !== null
+      ? String(user.assignedAC)
+      : fallbackAcIdentifier);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [boothFilter, setBoothFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -51,21 +56,33 @@ export const VoterManager = () => {
     pages: 0
   });
 
+  useEffect(() => {
+    setPagination({
+      page: 1,
+      limit: 50,
+      total: 0,
+      pages: 0
+    });
+  }, [acIdentifier]);
+
   // Fetch booths on mount
   useEffect(() => {
     fetchBooths();
-  }, [acNumber]);
+  }, [acIdentifier]);
 
   // Fetch voters when filters change
   useEffect(() => {
     fetchVoters();
-  }, [acNumber, boothFilter, statusFilter, pagination.page]);
+  }, [acIdentifier, boothFilter, statusFilter, pagination.page]);
 
   const fetchBooths = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/voters/${acNumber}/booths`, {
-        credentials: 'include',
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/voters/${encodeURIComponent(acIdentifier)}/booths`,
+        {
+          credentials: 'include',
+        },
+      );
 
       if (!response.ok) {
         throw new Error('Failed to fetch booths');
@@ -100,9 +117,12 @@ export const VoterManager = () => {
         params.append('search', searchTerm.trim());
       }
 
-      const response = await fetch(`${API_BASE_URL}/voters/${acNumber}?${params}`, {
-        credentials: 'include',
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/voters/${encodeURIComponent(acIdentifier)}?${params}`,
+        {
+          credentials: 'include',
+        },
+      );
 
       if (!response.ok) {
         throw new Error('Failed to fetch voters');
@@ -134,7 +154,11 @@ export const VoterManager = () => {
       <div className="space-y-8">
         <div>
           <h1 className="text-4xl font-bold mb-2">Voter Manager</h1>
-          <p className="text-muted-foreground">Manage voters for AC {acNumber} - Thondamuthur</p>
+          <p className="text-muted-foreground">
+            {user?.aciName
+              ? `Manage voters for ${user.aciName}`
+              : `Manage voters for AC ${user?.assignedAC ?? fallbackAcIdentifier}`}
+          </p>
         </div>
 
         {error && (

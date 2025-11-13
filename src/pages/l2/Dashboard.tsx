@@ -9,7 +9,10 @@ import { useEffect, useState } from 'react';
 import API_BASE_URL from '@/lib/api';
 
 interface DashboardStats {
-  acId: number;
+  acIdentifier: string | null;
+  acId: number | null;
+  acName: string | null;
+  acNumber: number | null;
   totalVoters: number;
   totalFamilies: number;
   surveysCompleted: number;
@@ -24,23 +27,31 @@ interface DashboardStats {
 
 export const L2Dashboard = () => {
   const { user } = useAuth();
-  const acNumber = user?.assignedAC || 119;
+  const fallbackAcIdentifier = "119";
+  const acIdentifier =
+    (user?.aciName && user.aciName.trim()) ||
+    (user?.assignedAC !== undefined && user?.assignedAC !== null
+      ? String(user.assignedAC)
+      : fallbackAcIdentifier);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDashboardStats();
-  }, [acNumber]);
+  }, [acIdentifier]);
 
   const fetchDashboardStats = async () => {
     try {
       setLoading(true);
       setError(null);
-      
-      const response = await fetch(`${API_BASE_URL}/dashboard/stats/${acNumber}`, {
+
+      const response = await fetch(
+        `${API_BASE_URL}/dashboard/stats/${encodeURIComponent(acIdentifier)}`,
+        {
         credentials: 'include',
-      });
+        },
+      );
 
       if (!response.ok) {
         throw new Error('Failed to fetch dashboard statistics');
@@ -61,12 +72,24 @@ export const L2Dashboard = () => {
     return num.toLocaleString();
   };
 
+  const displayAcNumber =
+    stats?.acNumber ??
+    (user?.assignedAC !== undefined && user?.assignedAC !== null
+      ? user.assignedAC
+      : Number(stats?.acIdentifier ?? acIdentifier) || undefined);
+  const displayAcName = stats?.acName ?? user?.aciName ?? null;
+  const constituencyLabel = displayAcName
+    ? `Assembly Constituency${displayAcNumber ? ` ${displayAcNumber}` : ''} - ${displayAcName}`
+    : displayAcNumber
+      ? `Assembly Constituency ${displayAcNumber}`
+      : 'Assembly Constituency Overview';
+
   return (
     <DashboardLayout>
       <div className="space-y-8">
         <div>
           <h1 className="text-4xl font-bold mb-2">My Dashboard</h1>
-          <p className="text-xl text-muted-foreground">Assembly Constituency {acNumber} - Thondamuthur</p>
+          <p className="text-xl text-muted-foreground">{constituencyLabel}</p>
         </div>
 
         {error && (

@@ -181,8 +181,13 @@ const AppSidebar = () => {
               <>
                 <p className="text-sm font-medium truncate">{user?.name}</p>
                 <p className="text-xs text-muted-foreground truncate">{roleLabels[user?.role || 'L0']}</p>
+                {user?.aciName && (
+                  <p className="text-xs text-muted-foreground mt-1 truncate">{user.aciName}</p>
+                )}
                 {user?.assignedAC && (
-                  <p className="text-xs text-muted-foreground mt-1 truncate">AC {user.assignedAC}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    AC {user.assignedAC}
+                  </p>
                 )}
               </>
             ) : (

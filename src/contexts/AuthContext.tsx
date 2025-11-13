@@ -15,6 +15,7 @@ export interface User {
   email: string;
   role: UserRole;
   assignedAC?: number | null;
+  aciName?: string | null;
 }
 
 interface LoginResult {
