@@ -678,6 +678,263 @@ app.get("/api/voters/:acId/booths", async (req, res) => {
   }
 });
 
+// Get families for a specific AC (aggregated from voters)
+app.get("/api/families/:acId", async (req, res) => {
+  try {
+    await connectToDatabase();
+    
+    const acId = parseInt(req.params.acId);
+    const { booth, search, page = 1, limit = 50 } = req.query;
+    
+    if (isNaN(acId)) {
+      return res.status(400).json({ message: "Invalid AC ID" });
+    }
+    
+    // Build match query
+    const matchQuery = {
+      $or: [
+        { aci_num: acId },
+        { aci_id: acId }
+      ]
+    };
+    
+    // Add booth filter if provided
+    if (booth && booth !== 'all') {
+      matchQuery.boothname = booth;
+    }
+    
+    // Aggregate families by grouping voters with same address and booth
+    const familiesAggregation = await Voter.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: {
+            address: "$address",
+            booth: "$boothname",
+            boothno: "$boothno"
+          },
+          family_head: { $first: "$name" },
+          members: { $sum: 1 },
+          voters: { $push: { name: "$name", voterID: "$voterID", age: "$age", gender: "$gender", mobile: "$mobile" } },
+          mobile: { $first: "$mobile" }
+        }
+      },
+      { $sort: { "_id.boothno": 1, "_id.address": 1 } }
+    ]);
+    
+    // Apply search filter if provided (client-side filtering after aggregation)
+    let filteredFamilies = familiesAggregation;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredFamilies = familiesAggregation.filter(family => 
+        (family.family_head?.english?.toLowerCase().includes(searchLower) ||
+         family.family_head?.tamil?.toLowerCase().includes(searchLower) ||
+         family._id.address?.toLowerCase().includes(searchLower))
+      );
+    }
+    
+    // Pagination
+    const total = filteredFamilies.length;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const paginatedFamilies = filteredFamilies.slice(skip, skip + parseInt(limit));
+    
+    return res.json({
+      families: paginatedFamilies.map((family, index) => ({
+        id: `FAM${skip + index + 1}`.padStart(8, '0'),
+        family_head: family.family_head?.english || family.family_head?.tamil || family.voters[0]?.name?.english || 'N/A',
+        members: family.members,
+        address: family._id.address || 'N/A',
+        booth: family._id.booth || `Booth ${family._id.boothno || 'N/A'}`,
+        boothNo: family._id.boothno,
+        phone: family.mobile ? `+91 ${family.mobile}` : 'N/A',
+        status: family.members > 0 ? 'Active' : 'Inactive',
+        voters: family.voters
+      })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error fetching families:", error);
+    return res.status(500).json({ message: "Failed to fetch families" });
+  }
+});
+
+// Get survey responses for a specific AC
+app.get("/api/survey-responses/:acId", async (req, res) => {
+  try {
+    await connectToDatabase();
+    
+    const acId = parseInt(req.params.acId);
+    const { booth, survey, page = 1, limit = 50 } = req.query;
+    
+    if (isNaN(acId)) {
+      return res.status(400).json({ message: "Invalid AC ID" });
+    }
+    
+    const SurveyResponse = mongoose.model('SurveyResponse', new mongoose.Schema({}, { strict: false, collection: 'surveyresponses' }));
+    
+    // Build query
+    const query = {};
+    
+    // Note: Survey responses might not have aci_num/aci_id directly
+    // They might be linked through voter or booth data
+    // Adjust based on your actual schema
+    
+    if (booth && booth !== 'all') {
+      query.booth = booth;
+    }
+    
+    if (survey && survey !== 'all') {
+      query.surveyId = survey;
+    }
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Fetch survey responses
+    const responses = await SurveyResponse.find(query)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .sort({ createdAt: -1 });
+    
+    const totalResponses = await SurveyResponse.countDocuments(query);
+    
+    return res.json({
+      responses: responses.map(response => ({
+        id: response._id,
+        survey_id: response.surveyId || response.formId || 'N/A',
+        respondent_name: response.voterName || response.respondentName || 'N/A',
+        voter_id: response.voterId || 'N/A',
+        booth: response.booth || 'N/A',
+        survey_date: response.createdAt || response.submittedAt || new Date(),
+        status: response.status || 'Completed',
+        answers: response.answers || response.responses || []
+      })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalResponses,
+        pages: Math.ceil(totalResponses / parseInt(limit))
+      }
+    });
+    
+  } catch (error) {
+    console.error("Error fetching survey responses:", error);
+    return res.status(500).json({ message: "Failed to fetch survey responses" });
+  }
+});
+
+// Get booth performance reports
+app.get("/api/reports/:acId/booth-performance", async (req, res) => {
+  try {
+    await connectToDatabase();
+    
+    const acId = parseInt(req.params.acId);
+    const { booth } = req.query;
+    
+    if (isNaN(acId)) {
+      return res.status(400).json({ message: "Invalid AC ID" });
+    }
+    
+    // Build match query
+    const matchQuery = {
+      $or: [
+        { aci_num: acId },
+        { aci_id: acId }
+      ]
+    };
+    
+    if (booth && booth !== 'all') {
+      matchQuery.boothname = booth;
+    }
+    
+    // Aggregate booth performance data
+    const boothPerformance = await Voter.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: {
+            boothname: "$boothname",
+            boothno: "$boothno"
+          },
+          total_voters: { $sum: 1 },
+          male_voters: {
+            $sum: { $cond: [{ $eq: ["$gender", "Male"] }, 1, 0] }
+          },
+          female_voters: {
+            $sum: { $cond: [{ $eq: ["$gender", "Female"] }, 1, 0] }
+          },
+          verified_voters: {
+            $sum: { $cond: ["$verified", 1, 0] }
+          },
+          avg_age: { $avg: "$age" }
+        }
+      },
+      { $sort: { "_id.boothno": 1 } }
+    ]);
+    
+    // Get survey completion data (if survey responses have booth info)
+    const SurveyResponse = mongoose.model('SurveyResponse', new mongoose.Schema({}, { strict: false, collection: 'surveyresponses' }));
+    const surveysByBooth = await SurveyResponse.aggregate([
+      {
+        $group: {
+          _id: "$booth",
+          surveys_completed: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    const surveyMap = new Map(surveysByBooth.map(s => [s._id, s.surveys_completed]));
+    
+    // Calculate families per booth
+    const familiesByBooth = await Voter.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: {
+            booth: "$boothname",
+            address: "$address"
+          }
+        }
+      },
+      {
+        $group: {
+          _id: "$_id.booth",
+          total_families: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    const familyMap = new Map(familiesByBooth.map(f => [f._id, f.total_families]));
+    
+    return res.json({
+      reports: boothPerformance.map(booth => ({
+        booth: booth._id.boothname || `Booth ${booth._id.boothno}`,
+        boothNo: booth._id.boothno,
+        total_voters: booth.total_voters,
+        total_families: familyMap.get(booth._id.boothname) || 0,
+        male_voters: booth.male_voters,
+        female_voters: booth.female_voters,
+        verified_voters: booth.verified_voters,
+        surveys_completed: surveyMap.get(booth._id.boothname) || 0,
+        avg_age: Math.round(booth.avg_age || 0),
+        completion_rate: booth.total_voters > 0 
+          ? Math.round(((surveyMap.get(booth._id.boothname) || 0) / booth.total_voters) * 100)
+          : 0
+      }))
+    });
+    
+  } catch (error) {
+    console.error("Error fetching booth performance:", error);
+    return res.status(500).json({ message: "Failed to fetch booth performance" });
+  }
+});
+
 app.get("/api/health", async (_req, res) => {
   try {
     await connectToDatabase();
