@@ -27,6 +27,10 @@ const voterSchema = new mongoose.Schema({
   status: String,
   verified: Boolean,
   verifiedAt: Date,
+  surveyed: {
+    type: Boolean,
+    default: false,
+  },
   aci_id: Number,
   aci_name: String
 }, {

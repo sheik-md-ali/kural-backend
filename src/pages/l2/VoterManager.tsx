@@ -21,6 +21,7 @@ interface Voter {
   age?: number;
   gender?: string;
   verified?: boolean;
+  surveyed?: boolean;
 }
 
 interface Pagination {

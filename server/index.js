@@ -668,7 +668,7 @@ app.get("/api/voters/:acId", async (req, res) => {
 
     // Fetch voters with pagination
     const voters = await Voter.find(query)
-      .select("name voterID family_id booth_id boothname boothno mobile status age gender verified")
+      .select("name voterID family_id booth_id boothname boothno mobile status age gender verified surveyed")
       .skip(skip)
       .limit(parseInt(limit))
       .sort({ boothno: 1, name: 1 });
@@ -689,6 +689,7 @@ app.get("/api/voters/:acId", async (req, res) => {
         age: voter.age,
         gender: voter.gender,
         verified: voter.verified || false,
+        surveyed: voter.surveyed ?? false,
       })),
       pagination: {
         page: parseInt(page),
