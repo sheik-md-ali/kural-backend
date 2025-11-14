@@ -72,11 +72,13 @@ const AppSidebar = () => {
       case 'L0':
         return [
           { icon: LayoutDashboard, label: 'System Dashboard', path: '/l0/dashboard' },
+          { icon: Users, label: 'User Management', path: '/l0/users' },
           { icon: UserCog, label: 'Admin Management', path: '/l0/admins' },
           { icon: Users, label: 'Voter Data', path: '/l0/voters' },
           { icon: FileText, label: 'Survey Forms', path: '/l0/surveys' },
           { icon: Home, label: 'Booth Management', path: '/l0/booths' },
           { icon: UserCircle, label: 'Booth Agent Management', path: '/l0/booth-agents' },
+          { icon: UserCircle, label: 'Register Booth Agent', path: '/shared/booth-agent-registration' },
           { icon: ScrollText, label: 'Activity Logs', path: '/l0/activity-logs' },
           { icon: Settings, label: 'App Settings', path: '/l0/settings' },
         ];
@@ -90,8 +92,9 @@ const AppSidebar = () => {
           { icon: FileText, label: 'Survey Forms', path: '/l1/surveys' },
           { icon: FileText, label: 'Survey Form Assignments', path: '/l1/survey-assignments' },
           { icon: UserCog, label: 'Moderator Management', path: '/l1/moderators' },
-          { icon: Home, label: 'Booth Management', path: '/l1/booths' },
+          { icon: Home, label: 'Booth Management', path: '/shared/booth-agent-management' },
           { icon: Users, label: 'Booth Agent Management', path: '/l1/booth-agents' },
+          { icon: Users, label: 'Register Booth Agent', path: '/shared/booth-agent-registration' },
           { icon: Activity, label: 'Live Survey Monitor', path: '/l1/live-surveys' },
           { icon: ScrollText, label: 'Activity Logs', path: '/l1/activity-logs' },
         ];
@@ -102,8 +105,7 @@ const AppSidebar = () => {
           { icon: Home, label: 'Family Manager', path: '/l2/families' },
           { icon: FileText, label: 'Survey Forms', path: '/l2/survey-forms' },
           { icon: FileText, label: 'Survey Manager', path: '/l2/surveys' },
-          { icon: Home, label: 'Booth Management', path: '/l2/booths' },
-          { icon: UserCircle, label: 'Booth Agent Management', path: '/l2/booth-agents' },
+          { icon: Home, label: 'Booth & Agent Management', path: '/shared/booth-agent-management' },
           { icon: Activity, label: 'Live Booth Updates', path: '/l2/live-updates' },
           { icon: ScrollText, label: 'Activity Logs', path: '/l2/activity-logs' },
         ];

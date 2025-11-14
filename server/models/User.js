@@ -36,6 +36,32 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    assignedBoothId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Booth",
+    },
+    booth_id: {
+      type: String,
+      trim: true,
+    },
+    booth_agent_id: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    aci_id: {
+      type: Number,
+    },
+    status: {
+      type: String,
+      enum: ["Active", "Inactive", "Pending"],
+      default: "Active",
+    },
     isActive: {
       type: Boolean,
       default: true,

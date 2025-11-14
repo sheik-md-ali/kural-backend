@@ -25,6 +25,7 @@ import L1ActivityLogs from "@/pages/l1/ActivityLogs";
 import L2ActivityLogs from "@/pages/l2/ActivityLogs";
 import { BoothManagement } from "@/pages/shared/BoothManagement";
 import { BoothAgentManagement } from "@/pages/shared/BoothAgentManagement";
+import BoothAgentRegistration from "@/pages/shared/BoothAgentRegistration";
 import { L0Dashboard } from "@/pages/l0/Dashboard";
 import { AdminManagement } from "@/pages/l0/AdminManagement";
 import { AppSettings } from "@/pages/l0/AppSettings";
@@ -40,6 +41,8 @@ import { LiveBoothUpdates } from "@/pages/l2/LiveBoothUpdates";
 import { Reports } from "@/pages/l2/Reports";
 import { SurveyForms as L2SurveyForms } from "@/pages/l2/SurveyForms";
 import { FormPreview } from "@/pages/shared/FormPreview";
+import UserManagement from "@/pages/l0/UserManagement";
+import { BoothAgentManagement as BoothAgentManagementNew } from "@/pages/shared/BoothAgentManagement";
 import { WarRoom } from "@/pages/l9/WarRoom";
 import GeographicIntelligence from "@/pages/l9/GeographicIntelligence";
 import PredictiveAnalytics from "@/pages/l9/PredictiveAnalytics";
@@ -100,6 +103,7 @@ const AppRoutes = () => {
       
       {/* L0 Routes */}
       <Route path="/l0/dashboard" element={<ProtectedRoute allowedRoles={['L0']}><L0Dashboard /></ProtectedRoute>} />
+      <Route path="/l0/users" element={<ProtectedRoute allowedRoles={['L0']}><UserManagement /></ProtectedRoute>} />
       <Route path="/l0/admins" element={<ProtectedRoute allowedRoles={['L0']}><AdminManagement /></ProtectedRoute>} />
       <Route path="/l0/settings" element={<ProtectedRoute allowedRoles={['L0']}><AppSettings /></ProtectedRoute>} />
       <Route path="/l0/voters" element={<ProtectedRoute allowedRoles={['L0']}><VoterData /></ProtectedRoute>} />
@@ -109,6 +113,10 @@ const AppRoutes = () => {
       <Route path="/l0/booths" element={<ProtectedRoute allowedRoles={['L0']}><BoothManagement /></ProtectedRoute>} />
       <Route path="/l0/booth-agents" element={<ProtectedRoute allowedRoles={['L0']}><BoothAgentManagement /></ProtectedRoute>} />
       <Route path="/l0/activity-logs" element={<ProtectedRoute allowedRoles={['L0']}><L0ActivityLogs /></ProtectedRoute>} />
+      
+      {/* Shared Routes (RBAC-enabled) */}
+      <Route path="/shared/booth-agent-management" element={<ProtectedRoute allowedRoles={['L1', 'L2']}><BoothAgentManagementNew /></ProtectedRoute>} />
+      <Route path="/shared/booth-agent-registration" element={<ProtectedRoute allowedRoles={['L0', 'L1']}><BoothAgentRegistration /></ProtectedRoute>} />
       
       {/* L1 Routes */}
       <Route path="/l1/constituencies" element={<ProtectedRoute allowedRoles={['L1']}><ConstituencySelector /></ProtectedRoute>} />

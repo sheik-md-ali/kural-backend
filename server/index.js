@@ -1,6 +1,7 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import session from "express-session";
 import fs from "fs";
 import mongoose from "mongoose";
 import path from "path";
@@ -9,6 +10,10 @@ import { fileURLToPath } from "url";
 import User from "./models/User.js";
 import Survey from "./models/Survey.js";
 import Voter from "./models/Voter.js";
+import Booth from "./models/Booth.js";
+
+// Import RBAC routes
+import rbacRoutes from "./routes/rbac.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +54,29 @@ app.use(
 );
 
 app.use(express.json());
+
+// Session middleware
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "kural-election-management-secret-key-2024",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    },
+  })
+);
+
+// Middleware to restore user from session
+app.use((req, res, next) => {
+  if (req.session && req.session.user) {
+    req.user = req.session.user;
+  }
+  next();
+});
 
 const roleMap = new Map([
   ["Admin", "L0"],
@@ -314,20 +342,47 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(403).json({ message: "Role is not authorised" });
     }
 
+    // Store user in session
+    const userSession = {
+      _id: user._id,
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: mappedRole,
+      assignedAC: user.assignedAC ?? null,
+      aciName: user.aci_name ?? null,
+    };
+
+    req.session.user = userSession;
+    req.user = userSession;
+
     return res.json({
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        role: mappedRole,
-        assignedAC: user.assignedAC ?? null,
-        aciName: user.aci_name ?? null,
-      },
+      user: userSession,
     });
   } catch (error) {
     console.error("Login error", error);
     return res.status(500).json({ message: "Internal server error" });
   }
+});
+
+// Logout endpoint
+app.post("/api/auth/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ message: "Failed to logout" });
+    }
+    res.clearCookie("connect.sid");
+    return res.json({ message: "Logged out successfully" });
+  });
+});
+
+// Check session endpoint
+app.get("/api/auth/me", (req, res) => {
+  if (req.session && req.session.user) {
+    return res.json({ user: req.session.user });
+  }
+  return res.status(401).json({ message: "Not authenticated" });
 });
 
 app.get("/api/surveys", async (req, res) => {
@@ -1092,6 +1147,9 @@ app.get("/api/health", async (_req, res) => {
     return res.status(503).json({ status: "error", message: error.message });
   }
 });
+
+// Mount RBAC routes
+app.use("/api/rbac", rbacRoutes);
 
 app.listen(PORT, () => {
   console.log(`Auth server listening on port ${PORT}`);

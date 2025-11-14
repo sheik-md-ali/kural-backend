@@ -1,0 +1,635 @@
+import React, { useState, useEffect } from "react";
+import { Plus, Search, Edit2, Trash2, Users, UserPlus, UserCog } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+
+interface User {
+  _id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  role: string;
+  assignedAC?: number;
+  aci_name?: string;
+  assignedBoothId?: {
+    _id: string;
+    boothName: string;
+    boothCode: string;
+  };
+  createdBy?: {
+    _id: string;
+    name: string;
+    role: string;
+  };
+  status: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+interface Booth {
+  _id: string;
+  boothName: string;
+  boothCode: string;
+  ac_id: number;
+}
+
+interface UserFormData {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+  role: string;
+  assignedAC: string;
+  aci_name: string;
+  assignedBoothId: string;
+  status: string;
+}
+
+const UserManagement: React.FC = () => {
+  const { toast } = useToast();
+  const { user: currentUser } = useAuth();
+  const [users, setUsers] = useState<User[]>([]);
+  const [booths, setBooths] = useState<Booth[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [formData, setFormData] = useState<UserFormData>({
+    name: "",
+    email: "",
+    phone: "",
+    password: "",
+    role: "BoothAgent",
+    assignedAC: currentUser?.assignedAC?.toString() || "",
+    aci_name: currentUser?.aciName || "",
+    assignedBoothId: "",
+    status: "Active",
+  });
+
+  useEffect(() => {
+    fetchUsers();
+    fetchBooths();
+  }, [roleFilter, statusFilter]);
+
+  const fetchBooths = async () => {
+    try {
+      const response = await api.get("/rbac/booths");
+      setBooths(response.booths || []);
+    } catch (error: any) {
+      console.error("Failed to fetch booths:", error);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (roleFilter !== "all") {
+        params.append("role", roleFilter);
+      }
+      if (statusFilter !== "all") {
+        params.append("status", statusFilter);
+      }
+
+      const response = await api.get(`/rbac/users?${params.toString()}`);
+      setUsers(response.users || []);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to fetch users",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    try {
+      if (isEditMode && editingUser) {
+        // Update user
+        const updateData: any = {
+          name: formData.name,
+          email: formData.email,
+          phone: formData.phone,
+          role: formData.role,
+          status: formData.status,
+        };
+
+        if (formData.assignedAC) {
+          updateData.assignedAC = parseInt(formData.assignedAC);
+        }
+        if (formData.aci_name) {
+          updateData.aci_name = formData.aci_name;
+        }
+        if (formData.assignedBoothId) {
+          updateData.assignedBoothId = formData.assignedBoothId;
+        }
+        if (formData.password) {
+          updateData.password = formData.password;
+        }
+
+        await api.put(`/rbac/users/${editingUser._id}`, updateData);
+        toast({
+          title: "Success",
+          description: "User updated successfully",
+        });
+      } else {
+        // Create new user
+        const createData: any = {
+          name: formData.name,
+          email: formData.email || undefined,
+          phone: formData.phone || undefined,
+          password: formData.password,
+          role: formData.role,
+          status: formData.status,
+        };
+
+        if (formData.assignedAC) {
+          createData.assignedAC = parseInt(formData.assignedAC);
+        }
+        if (formData.aci_name) {
+          createData.aci_name = formData.aci_name;
+        }
+        if (formData.assignedBoothId) {
+          createData.assignedBoothId = formData.assignedBoothId;
+        }
+
+        await api.post("/rbac/users", createData);
+        toast({
+          title: "Success",
+          description: "User created successfully",
+        });
+      }
+
+      setIsDialogOpen(false);
+      resetForm();
+      fetchUsers();
+    } catch (error: any) {
+      console.error("Error saving user:", error);
+      toast({
+        title: "Error",
+        description: error.message || error.toString() || "Failed to save user",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEdit = (user: User) => {
+    setIsEditMode(true);
+    setEditingUser(user);
+    setFormData({
+      name: user.name,
+      email: user.email || "",
+      phone: user.phone || "",
+      password: "",
+      role: user.role,
+      assignedAC: user.assignedAC?.toString() || "",
+      aci_name: user.aci_name || "",
+      assignedBoothId: user.assignedBoothId?._id || "",
+      status: user.status || "Active",
+    });
+    setIsDialogOpen(true);
+  };
+
+  const handleDelete = async (userId: string) => {
+    if (!confirm("Are you sure you want to delete this user?")) {
+      return;
+    }
+
+    try {
+      await api.delete(`/rbac/users/${userId}`);
+      toast({
+        title: "Success",
+        description: "User deleted successfully",
+      });
+      fetchUsers();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete user",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      name: "",
+      email: "",
+      phone: "",
+      password: "",
+      role: "BoothAgent",
+      assignedAC: currentUser?.assignedAC?.toString() || "",
+      aci_name: currentUser?.aciName || "",
+      assignedBoothId: "",
+      status: "Active",
+    });
+    setIsEditMode(false);
+    setEditingUser(null);
+  };
+
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch =
+      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.phone?.includes(searchTerm);
+    return matchesSearch;
+  });
+
+  const getRoleBadge = (role: string) => {
+    const roleConfig: { [key: string]: { label: string; variant: any } } = {
+      L1: { label: "ACIM", variant: "default" },
+      L2: { label: "ACI", variant: "secondary" },
+      BoothAgent: { label: "Booth Agent", variant: "outline" },
+    };
+
+    const config = roleConfig[role] || { label: role, variant: "outline" };
+    return <Badge variant={config.variant}>{config.label}</Badge>;
+  };
+
+  return (
+    <div className="space-y-6 p-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
+          <p className="text-muted-foreground">
+            Manage ACIM, ACI, and Booth Agent users
+          </p>
+        </div>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) resetForm();
+        }}>
+          <DialogTrigger asChild>
+            <Button>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Add User
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {isEditMode ? "Edit User" : "Create New User"}
+              </DialogTitle>
+              <DialogDescription>
+                {isEditMode
+                  ? "Update user information"
+                  : "Add a new ACIM, ACI, or Booth Agent user"}
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSubmit}>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name *</Label>
+                    <Input
+                      id="name"
+                      value={formData.name}
+                      onChange={(e) =>
+                        setFormData({ ...formData, name: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="role">Role *</Label>
+                    <Select
+                      value={formData.role}
+                      onValueChange={(value) =>
+                        setFormData({ ...formData, role: value })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* L0 (Super Admin) can create all roles */}
+                        {currentUser?.role === "L0" && (
+                          <>
+                            <SelectItem value="L1">ACIM</SelectItem>
+                            <SelectItem value="L2">ACI</SelectItem>
+                            <SelectItem value="BoothAgent">Booth Agent</SelectItem>
+                          </>
+                        )}
+                        {/* L1 (ACIM) can only create L2 and BoothAgent */}
+                        {currentUser?.role === "L1" && (
+                          <>
+                            <SelectItem value="L2">ACI</SelectItem>
+                            <SelectItem value="BoothAgent">Booth Agent</SelectItem>
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) =>
+                        setFormData({ ...formData, email: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone</Label>
+                    <Input
+                      id="phone"
+                      value={formData.phone}
+                      onChange={(e) =>
+                        setFormData({ ...formData, phone: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+
+                {(formData.role === "L1" || formData.role === "L2") && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="assignedAC">Assigned AC *</Label>
+                      <Input
+                        id="assignedAC"
+                        type="number"
+                        value={formData.assignedAC}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            assignedAC: e.target.value,
+                          })
+                        }
+                        required={formData.role === "L1" || formData.role === "L2"}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="aci_name">AC Name</Label>
+                      <Input
+                        id="aci_name"
+                        value={formData.aci_name}
+                        onChange={(e) =>
+                          setFormData({ ...formData, aci_name: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Booth Assignment - Only for BoothAgent */}
+                {formData.role === "BoothAgent" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="assignedBoothId">Assigned Booth</Label>
+                    <select
+                      id="assignedBoothId"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formData.assignedBoothId || ""}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          assignedBoothId: e.target.value || undefined,
+                        })
+                      }
+                    >
+                      <option value="">Select Booth (Optional)</option>
+                      {booths
+                        .filter((booth) =>
+                          formData.assignedAC
+                            ? booth.ac_id === parseInt(formData.assignedAC)
+                            : true
+                        )
+                        .map((booth) => (
+                          <option key={booth._id} value={booth._id}>
+                            {booth.boothName} ({booth.boothCode})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Status Selector */}
+                <div className="space-y-2">
+                  <Label htmlFor="status">Status</Label>
+                  <select
+                    id="status"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={formData.status}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        status: e.target.value as "Active" | "Inactive" | "Pending",
+                      })
+                    }
+                    required
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                    <option value="Pending">Pending</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="password">
+                    Password {isEditMode ? "(leave blank to keep current)" : "*"}
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) =>
+                      setFormData({ ...formData, password: e.target.value })
+                    }
+                    required={!isEditMode}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsDialogOpen(false);
+                    resetForm();
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit">
+                  {isEditMode ? "Update User" : "Create User"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Users List</CardTitle>
+            <div className="flex gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search users..."
+                  className="pl-8 w-[300px]"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <Select value={roleFilter} onValueChange={setRoleFilter}>
+                <SelectTrigger className="w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Roles</SelectItem>
+                  <SelectItem value="L1">ACIM</SelectItem>
+                  <SelectItem value="L2">ACI</SelectItem>
+                  <SelectItem value="BoothAgent">Booth Agent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-muted-foreground">Loading users...</div>
+            </div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center">
+              <Users className="h-12 w-12 text-muted-foreground mb-4" />
+              <p className="text-muted-foreground">No users found</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Assigned AC</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredUsers.map((user) => (
+                  <TableRow key={user._id}>
+                    <TableCell className="font-medium">{user.name}</TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        {user.email && (
+                          <div className="text-sm">{user.email}</div>
+                        )}
+                        {user.phone && (
+                          <div className="text-sm text-muted-foreground">
+                            {user.phone}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>{getRoleBadge(user.role)}</TableCell>
+                    <TableCell>
+                      {user.assignedAC ? (
+                        <div>
+                          <div className="font-medium">AC {user.assignedAC}</div>
+                          {user.aci_name && (
+                            <div className="text-sm text-muted-foreground">
+                              {user.aci_name}
+                            </div>
+                          )}
+                          {user.role === "BoothAgent" && user.assignedBoothId && (
+                            <div className="text-sm text-muted-foreground mt-1">
+                              📍 Booth Assigned
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          user.status === "Active"
+                            ? "default"
+                            : user.status === "Inactive"
+                            ? "destructive"
+                            : "secondary"
+                        }
+                      >
+                        {user.status || "Active"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {new Date(user.createdAt).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleEdit(user)}
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDelete(user._id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default UserManagement;
