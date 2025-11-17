@@ -156,6 +156,12 @@ export const L2Dashboard = () => {
               description="View booth performance"
               href="/l2/live-updates"
             />
+            <ActionButton
+              icon={Home}
+              title="Booth Management"
+              description="Create & update booths"
+              href="/shared/booth-management"
+            />
           </div>
         </div>
 
@@ -183,18 +189,23 @@ export const L2Dashboard = () => {
                       </td>
                     </tr>
                   ) : stats?.boothStats && stats.boothStats.length > 0 ? (
-                    stats.boothStats.map((booth) => (
-                      <tr key={booth.boothId || booth.boothNo} className="hover:bg-muted/50">
-                        <td className="px-4 py-3 text-sm font-medium">{booth.boothNo}</td>
-                        <td className="px-4 py-3 text-sm">{booth.boothName || 'N/A'}</td>
-                        <td className="px-4 py-3 text-sm">{formatNumber(booth.voters)}</td>
-                        <td className="px-4 py-3">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
-                            Active
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                    stats.boothStats.map((booth, index) => {
+                      const boothKey =
+                        (booth.boothId ? `${booth.boothId}-${index}` : null) ||
+                        `${booth.boothNo ?? 'unknown'}-${booth.boothName ?? 'booth'}-${index}`;
+                      return (
+                        <tr key={boothKey} className="hover:bg-muted/50">
+                          <td className="px-4 py-3 text-sm font-medium">{booth.boothNo}</td>
+                          <td className="px-4 py-3 text-sm">{booth.boothName || 'N/A'}</td>
+                          <td className="px-4 py-3 text-sm">{formatNumber(booth.voters)}</td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
+                              Active
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
                       <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">

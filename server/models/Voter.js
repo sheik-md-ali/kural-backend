@@ -34,7 +34,8 @@ const voterSchema = new mongoose.Schema({
   aci_id: Number,
   aci_name: String
 }, {
-  timestamps: true
+  timestamps: true,
+  strict: false, // Allow dynamic fields for voter records
 });
 
 const Voter = mongoose.model('Voter', voterSchema, 'voters');

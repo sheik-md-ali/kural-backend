@@ -32,15 +32,16 @@ router.get("/users", isAuthenticated, async (req, res) => {
   try {
     const { role, ac, search, status } = req.query;
 
-    // Check permissions
-    if (req.user.role !== "L0" && req.user.role !== "L1") {
+    // Check permissions - L0, L1, and L2 can view users (with restrictions)
+    if (req.user.role !== "L0" && req.user.role !== "L1" && req.user.role !== "L2") {
       return res.status(403).json({
         success: false,
-        message: "Only Super Admin and ACIM can view users",
+        message: "You don't have permission to view users",
       });
     }
 
     const query = { isActive: true };
+    let hasL1Or = false;
 
     // L1 (ACIM) can only see users they created or in their AC
     if (req.user.role === "L1") {
@@ -48,16 +49,46 @@ router.get("/users", isAuthenticated, async (req, res) => {
         { createdBy: req.user._id },
         { assignedAC: req.user.assignedAC },
       ];
+      hasL1Or = true;
+    }
+
+    // L2 (ACI) can only see users in their AC
+    if (req.user.role === "L2") {
+      query.assignedAC = req.user.assignedAC;
     }
 
     // Filter by role
     if (role) {
-      query.role = role;
+      // Handle both "Booth Agent" and "BoothAgent" for backward compatibility
+      if (role === "Booth Agent" || role === "BoothAgent") {
+        const roleFilter = { $or: [{ role: "Booth Agent" }, { role: "BoothAgent" }] };
+        
+        // If there's already a $or from L1 filter, combine with $and
+        if (hasL1Or) {
+          query.$and = [
+            { $or: query.$or },
+            roleFilter
+          ];
+          delete query.$or;
+        } else {
+          query.$or = roleFilter.$or;
+        }
+      } else {
+        query.role = role;
+      }
     }
 
     // Filter by AC
     if (ac) {
-      query.assignedAC = parseInt(ac);
+      const acId = parseInt(ac);
+      // For L1/L2, ensure they can only filter by their own AC
+      if ((req.user.role === "L1" || req.user.role === "L2") && acId !== req.user.assignedAC) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to users in this AC",
+        });
+      }
+      query.assignedAC = acId;
     }
 
     // Filter by status
@@ -68,11 +99,27 @@ router.get("/users", isAuthenticated, async (req, res) => {
     // Search by name, email, or phone
     if (search) {
       const searchRegex = new RegExp(search, "i");
-      query.$or = [
-        { name: searchRegex },
-        { email: searchRegex },
-        { phone: searchRegex },
-      ];
+      const searchFilter = {
+        $or: [
+          { name: searchRegex },
+          { email: searchRegex },
+          { phone: searchRegex },
+        ]
+      };
+      
+      // If there's already a $and (from L1 + role filter), add search to it
+      if (query.$and) {
+        query.$and.push(searchFilter);
+      } else if (query.$or) {
+        // If there's a $or (from role filter or L1), combine with $and
+        query.$and = [
+          { $or: query.$or },
+          searchFilter
+        ];
+        delete query.$or;
+      } else {
+        query.$or = searchFilter.$or;
+      }
     }
 
     const users = await User.find(query)
@@ -133,8 +180,8 @@ router.post("/users", isAuthenticated, async (req, res) => {
     if (req.user.role === "L0") {
       // L0 can create anyone
     } else if (req.user.role === "L1") {
-      // L1 (ACIM) can only create L2 (ACI) and BoothAgent
-      if (role !== "L2" && role !== "BoothAgent") {
+      // L1 (ACIM) can only create L2 (ACI) and Booth Agent
+      if (role !== "L2" && role !== "Booth Agent" && role !== "BoothAgent") {
         return res.status(403).json({
           success: false,
           message: "ACIM can only create ACI and Booth Agent users",
@@ -145,7 +192,7 @@ router.post("/users", isAuthenticated, async (req, res) => {
       const requestedACNum = typeof requestedAC === 'number' ? requestedAC : parseInt(requestedAC);
       const userAC = typeof req.user.assignedAC === 'number' ? req.user.assignedAC : parseInt(req.user.assignedAC);
       
-      if ((role === "L2" || role === "BoothAgent") && requestedAC && requestedACNum !== userAC) {
+      if ((role === "L2" || role === "Booth Agent" || role === "BoothAgent") && requestedAC && requestedACNum !== userAC) {
         return res.status(403).json({
           success: false,
           message: `You can only create users in your assigned AC (${userAC})`,
@@ -159,7 +206,7 @@ router.post("/users", isAuthenticated, async (req, res) => {
     }
 
     // Validate role
-    const validRoles = ["L0", "L1", "L2", "BoothAgent"];
+    const validRoles = ["L0", "L1", "L2", "Booth Agent", "BoothAgent"];
     if (!validRoles.includes(role)) {
       return res.status(400).json({
         success: false,
@@ -245,6 +292,177 @@ router.post("/users", isAuthenticated, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to create user",
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/rbac/users/booth-agent
+ * Create a new booth agent (dedicated endpoint)
+ * Access: L0, L1, L2
+ */
+router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
+  try {
+    const { 
+      username, 
+      password, 
+      fullName, 
+      phoneNumber, 
+      booth_id, 
+      aci_id, 
+      aci_name 
+    } = req.body;
+
+    console.log("Create booth agent request:", { 
+      username, fullName, phoneNumber, booth_id, aci_id,
+      currentUserRole: req.user.role, currentUserAC: req.user.assignedAC 
+    });
+
+    // Validate required fields
+    if (!username || !password || !fullName || !phoneNumber || !booth_id || !aci_id) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required (username, password, fullName, phoneNumber, booth_id, aci_id)",
+      });
+    }
+
+    // Check creation privileges
+    if (req.user.role === "L0") {
+      // L0 can create anyone
+    } else if (req.user.role === "L1") {
+      // L1 (ACIM) can only create in their AC
+      const requestedACNum = typeof aci_id === 'number' ? aci_id : parseInt(aci_id);
+      const userAC = typeof req.user.assignedAC === 'number' ? req.user.assignedAC : parseInt(req.user.assignedAC);
+      
+      if (requestedACNum !== userAC) {
+        return res.status(403).json({
+          success: false,
+          message: `You can only create booth agents in your assigned AC (${userAC})`,
+        });
+      }
+    } else if (req.user.role === "L2") {
+      // L2 (ACI) can only create in their AC
+      const requestedACNum = typeof aci_id === 'number' ? aci_id : parseInt(aci_id);
+      const userAC = typeof req.user.assignedAC === 'number' ? req.user.assignedAC : parseInt(req.user.assignedAC);
+      
+      if (requestedACNum !== userAC) {
+        return res.status(403).json({
+          success: false,
+          message: `You can only create booth agents in your assigned AC (${userAC})`,
+        });
+      }
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to create booth agents",
+      });
+    }
+
+    // Verify booth exists and is in the correct AC
+    const booth = await Booth.findById(booth_id);
+    if (!booth || !booth.isActive) {
+      return res.status(404).json({
+        success: false,
+        message: "Booth not found or inactive",
+      });
+    }
+
+    const aciIdNum = typeof aci_id === 'number' ? aci_id : parseInt(aci_id);
+    if (booth.ac_id !== aciIdNum) {
+      return res.status(400).json({
+        success: false,
+        message: "Booth does not belong to the specified AC",
+      });
+    }
+
+    // Check if user already exists (by email/username or phone)
+    const existingUser = await User.findOne({
+      $or: [
+        { email: username.toLowerCase() },
+        { phone: phoneNumber },
+      ],
+      isActive: true,
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "User with this username or phone number already exists",
+      });
+    }
+
+    // Generate booth_agent_id
+    // Format: phone-001, phone-002, etc.
+    const existingAgents = await User.countDocuments({ 
+      phone: phoneNumber,
+      role: "Booth Agent",
+      isActive: true 
+    });
+    let sequence = existingAgents + 1;
+    let booth_agent_id = `${phoneNumber}-${String(sequence).padStart(3, "0")}`;
+
+    // Check if booth_agent_id already exists (unlikely but possible)
+    let existingAgentId = await User.findOne({ booth_agent_id });
+    while (existingAgentId) {
+      // Try with incremented sequence
+      sequence++;
+      booth_agent_id = `${phoneNumber}-${String(sequence).padStart(3, "0")}`;
+      existingAgentId = await User.findOne({ booth_agent_id });
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Create booth agent user
+    // Store username in email field for login purposes
+    const newUser = new User({
+      email: username.toLowerCase(),
+      name: fullName,
+      phone: phoneNumber,
+      passwordHash,
+      password: passwordHash, // Store in both fields for compatibility
+      role: "Booth Agent",
+      assignedAC: aciIdNum,
+      aci_id: aciIdNum,
+      aci_name: aci_name || booth.ac_name,
+      assignedBoothId: booth_id,
+      booth_id: booth.booth_id || booth_id,
+      booth_agent_id,
+      status: "Active",
+      createdBy: req.user._id,
+      isActive: true,
+    });
+
+    await newUser.save();
+
+    // Update booth to include this agent in assignedAgents
+    if (!booth.assignedAgents.includes(newUser._id)) {
+      booth.assignedAgents.push(newUser._id);
+      // If this is the first agent, set as primary
+      if (!booth.primaryAgent) {
+        booth.primaryAgent = newUser._id;
+      }
+      await booth.save();
+    }
+
+    // Return user without password
+    const userResponse = await User.findById(newUser._id)
+      .select("-password -passwordHash")
+      .populate("createdBy", "name role")
+      .populate("assignedBoothId", "boothName boothCode booth_id");
+
+    res.status(201).json({
+      success: true,
+      message: "Booth agent created successfully",
+      user: userResponse,
+      booth_agent_id: newUser.booth_agent_id,
+    });
+  } catch (error) {
+    console.error("Error creating booth agent:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create booth agent",
       error: error.message,
     });
   }
@@ -606,7 +824,13 @@ router.get("/booth-agents", isAuthenticated, canManageBoothAgents, validateACAcc
   try {
     const { ac, assigned, search } = req.query;
 
-    let query = { role: "BoothAgent", isActive: true };
+    let query = { 
+      $or: [
+        { role: "Booth Agent" },
+        { role: "BoothAgent" }
+      ],
+      isActive: true 
+    };
 
     // Apply AC filter for L1/L2
     if (req.user.role === "L1" || req.user.role === "L2") {
@@ -710,7 +934,7 @@ router.post("/booth-agents/:boothId/assign", isAuthenticated, canAssignAgents, v
 
     // Find agent
     const agent = await User.findById(agentId);
-    if (!agent || agent.role !== "BoothAgent" || !agent.isActive) {
+    if (!agent || (agent.role !== "Booth Agent" && agent.role !== "BoothAgent") || !agent.isActive) {
       return res.status(404).json({
         success: false,
         message: "Booth agent not found",
@@ -829,7 +1053,7 @@ router.put("/booth-agents/:agentId/assign-booth", isAuthenticated, canAssignAgen
 
     // Find agent
     const agent = await User.findById(agentId);
-    if (!agent || agent.role !== "BoothAgent" || !agent.isActive) {
+    if (!agent || (agent.role !== "Booth Agent" && agent.role !== "BoothAgent") || !agent.isActive) {
       return res.status(404).json({
         success: false,
         message: "Booth agent not found",
@@ -919,7 +1143,7 @@ router.get("/dashboard/stats", isAuthenticated, validateACAccess, async (req, re
     const totalBooths = await Booth.countDocuments(boothQuery);
     const totalAgents = await User.countDocuments({
       ...userQuery,
-      role: "BoothAgent",
+      role: "Booth Agent",
     });
 
     // Get assigned agents count

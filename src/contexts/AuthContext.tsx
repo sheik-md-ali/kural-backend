@@ -33,7 +33,30 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AUTH_STORAGE_KEY = "kuralapp.auth.user";
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+// Use relative path in development (for Vite proxy) or absolute URL from env
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "/api" : "http://localhost:4000/api");
+
+const normalizeUser = (rawUser: User | null): User | null => {
+  if (!rawUser) {
+    return null;
+  }
+
+  const assignedAC =
+    typeof rawUser.assignedAC === "number"
+      ? rawUser.assignedAC
+      : rawUser.assignedAC !== undefined && rawUser.assignedAC !== null
+        ? Number(rawUser.assignedAC)
+        : null;
+
+  const normalizedAssignedAC =
+    assignedAC !== null && Number.isFinite(assignedAC) ? assignedAC : null;
+
+  return {
+    ...rawUser,
+    assignedAC: normalizedAssignedAC,
+    aciName: rawUser.aciName ?? null,
+  };
+};
 
 const readStoredUser = (): User | null => {
   if (typeof window === "undefined") {
@@ -46,7 +69,7 @@ const readStoredUser = (): User | null => {
   }
 
   try {
-    return JSON.parse(stored) as User;
+    return normalizeUser(JSON.parse(stored) as User);
   } catch {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     return null;
@@ -61,6 +84,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     const checkSession = async () => {
       try {
+        // First, try to restore from localStorage if available
+        if (typeof window !== "undefined") {
+          const storedUser = window.localStorage.getItem(AUTH_STORAGE_KEY);
+          if (storedUser) {
+            try {
+              const parsedUser = JSON.parse(storedUser);
+              setUser(normalizeUser(parsedUser));
+              // Still verify with server, but don't clear on failure immediately
+              setIsCheckingSession(false);
+            } catch (e) {
+              console.error("Failed to parse stored user:", e);
+            }
+          }
+        }
+
+        // Verify session with server
         const response = await fetch(`${API_BASE_URL}/auth/me`, {
           method: "GET",
           credentials: "include",
@@ -68,13 +107,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         if (response.ok) {
           const data = await response.json();
-          setUser(data.user);
-        } else {
-          // Session expired or invalid
+          setUser(normalizeUser(data.user));
+        } else if (response.status === 401) {
+          // Session expired or invalid - clear user
           setUser(null);
         }
+        // If other error, keep existing user from localStorage if available
       } catch (error) {
         console.error("Session check failed:", error);
+        // On network error, keep user from localStorage if available
       } finally {
         setIsCheckingSession(false);
       }
@@ -138,7 +179,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       const data = await response.json();
-      const authenticatedUser = data.user as User;
+      const authenticatedUser = normalizeUser(data.user as User);
       setUser(authenticatedUser);
       return { success: true };
     } catch (error) {

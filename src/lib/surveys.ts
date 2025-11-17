@@ -1,4 +1,4 @@
-import API_BASE_URL from "./api";
+import API_BASE_URL, { api } from "./api";
 
 export type SurveyStatus = "Draft" | "Active";
 
@@ -48,18 +48,6 @@ function buildQueryString(params: Record<string, string | undefined>) {
   return queryString ? `?${queryString}` : "";
 }
 
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    const message =
-      typeof errorBody?.message === "string"
-        ? errorBody.message
-        : "An unexpected error occurred";
-    throw new Error(message);
-  }
-  return response.json() as Promise<T>;
-}
-
 export async function fetchSurveys({
   role,
   assignedAC,
@@ -80,31 +68,19 @@ export async function fetchSurveys({
     assignedAC: assignedParam,
   });
 
-  const response = await fetch(`${API_BASE_URL}/surveys${query}`);
-  return handleResponse<Survey[]>(response);
+  return api.get(`/surveys${query}`);
 }
 
 export async function fetchSurvey(id: string): Promise<Survey> {
-  const response = await fetch(`${API_BASE_URL}/surveys/${id}`);
-  return handleResponse<Survey>(response);
+  return api.get(`/surveys/${id}`);
 }
 
 export async function createSurvey(payload: SurveyPayload): Promise<Survey> {
-  const response = await fetch(`${API_BASE_URL}/surveys`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return handleResponse<Survey>(response);
+  return api.post("/surveys", payload);
 }
 
 export async function updateSurvey(id: string, payload: SurveyPayload): Promise<Survey> {
-  const response = await fetch(`${API_BASE_URL}/surveys/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return handleResponse<Survey>(response);
+  return api.put(`/surveys/${id}`, payload);
 }
 
 export async function updateSurveyStatus(id: string, status: SurveyStatus): Promise<Survey> {
@@ -114,6 +90,7 @@ export async function updateSurveyStatus(id: string, status: SurveyStatus): Prom
 export async function deleteSurvey(id: string): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/surveys/${id}`, {
     method: "DELETE",
+    credentials: "include",
   });
   if (!response.ok && response.status !== 204) {
     const errorBody = await response.json().catch(() => ({}));

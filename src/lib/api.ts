@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+// Use relative path in development (for Vite proxy) or absolute URL from env
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "/api" : "http://localhost:4000/api");
 
 /**
  * API utility for making HTTP requests to the backend

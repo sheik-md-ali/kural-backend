@@ -29,6 +29,28 @@ interface Booth {
 export const BoothManagement = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+
+  const getConstituencyName = (acId?: number | null) => {
+    if (!acId) {
+      return '';
+    }
+    return CONSTITUENCIES.find((c) => c.number === Number(acId))?.name || '';
+  };
+
+  const getDefaultAcId = () => {
+    if (user?.role === 'L2' && user.assignedAC) {
+      return user.assignedAC;
+    }
+    return 119;
+  };
+
+  const getDefaultAcName = () => {
+    if (user?.role === 'L2') {
+      return user.aciName || getConstituencyName(user.assignedAC) || '';
+    }
+    return getConstituencyName(119) || '';
+  };
+
   const [booths, setBooths] = useState<Booth[]>([]);
   const [loading, setLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
@@ -41,8 +63,8 @@ export const BoothManagement = () => {
   const [newBooth, setNewBooth] = useState({
     boothNumber: '',
     boothName: '',
-    ac_id: user?.role === 'L2' ? user.assignedAC : 119,
-    ac_name: user?.role === 'L2' ? (user.aciName || '') : 'Thondamuthur',
+    acId: getDefaultAcId(),
+    acName: getDefaultAcName(),
     address: '',
     totalVoters: 0,
   });
@@ -55,6 +77,22 @@ export const BoothManagement = () => {
     address: '',
     totalVoters: 0,
   });
+
+  // Keep AC defaults in sync with authenticated user
+  useEffect(() => {
+    setNewBooth((prev) => {
+      const updatedAcId = user?.role === 'L2' && user.assignedAC ? user.assignedAC : prev.acId;
+      const updatedAcName =
+        user?.role === 'L2'
+          ? user.aciName || getConstituencyName(updatedAcId) || prev.acName
+          : prev.acName || getConstituencyName(updatedAcId);
+      return {
+        ...prev,
+        acId: updatedAcId,
+        acName: updatedAcName,
+      };
+    });
+  }, [user]);
 
   // Fetch booths on mount
   useEffect(() => {
@@ -91,17 +129,32 @@ export const BoothManagement = () => {
       return;
     }
 
+    const normalizedAcId = Number(newBooth.acId || user?.assignedAC || 0);
+    const resolvedAcName =
+      (newBooth.acName && newBooth.acName.trim()) ||
+      user?.aciName ||
+      getConstituencyName(normalizedAcId);
+
+    if (!normalizedAcId || !resolvedAcName) {
+      toast({
+        title: 'Error',
+        description: 'Assembly constituency details are missing. Please select an AC.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     try {
       setCreating(true);
       console.log('Creating booth with data:', newBooth);
       
       const response = await api.post('/rbac/booths', {
-        boothNumber: parseInt(newBooth.boothNumber),
-        boothName: newBooth.boothName,
-        ac_id: parseInt(newBooth.ac_id.toString()),
-        ac_name: newBooth.ac_name,
-        address: newBooth.address || undefined,
-        totalVoters: newBooth.totalVoters || 0,
+        boothNumber: parseInt(newBooth.boothNumber, 10),
+        boothName: newBooth.boothName.trim(),
+        acId: normalizedAcId,
+        acName: resolvedAcName,
+        address: newBooth.address?.trim() || undefined,
+        totalVoters: Number(newBooth.totalVoters) || 0,
       });
       
       console.log('Booth created:', response);
@@ -118,8 +171,8 @@ export const BoothManagement = () => {
       setNewBooth({
         boothNumber: '',
         boothName: '',
-        ac_id: user?.role === 'L2' ? user.assignedAC : 119,
-        ac_name: user?.role === 'L2' ? (user.aciName || '') : 'Thondamuthur',
+        acId: getDefaultAcId(),
+        acName: getDefaultAcName(),
         address: '',
         totalVoters: 0,
       });
@@ -269,13 +322,13 @@ export const BoothManagement = () => {
                   <div className="space-y-2">
                     <Label htmlFor="ac">Assembly Constituency <span className="text-destructive">*</span></Label>
                     <Select 
-                      value={newBooth.ac_id.toString()} 
+                      value={newBooth.acId?.toString() || ''} 
                       onValueChange={(value) => {
                         const constituency = CONSTITUENCIES.find(c => c.number === parseInt(value));
                         setNewBooth({
                           ...newBooth, 
-                          ac_id: parseInt(value),
-                          ac_name: constituency?.name || ''
+                          acId: parseInt(value, 10),
+                          acName: constituency?.name || ''
                         });
                       }}
                     >

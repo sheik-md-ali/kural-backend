@@ -48,6 +48,12 @@ const surveySchema = new mongoose.Schema(
       enum: ["Draft", "Active"],
       default: "Draft",
     },
+    formNumber: {
+      type: String,
+      unique: true,
+      sparse: true, // Allows multiple null values
+      trim: true,
+    },
     questions: {
       type: [questionSchema],
       default: [],

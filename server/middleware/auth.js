@@ -1,7 +1,28 @@
+import { resolveAssignedACFromUser } from "../utils/ac.js";
+
 /**
  * Authentication and Authorization Middleware
  * Provides role-based access control for election management system
  */
+
+const normalizeUserAssignedAC = (user) => {
+  const resolved = resolveAssignedACFromUser(user);
+  if (resolved !== null && user) {
+    user.assignedAC = resolved;
+  }
+  return resolved;
+};
+
+const toNumericAcId = (value) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 /**
  * Middleware to check if user is authenticated
@@ -140,7 +161,9 @@ export const validateACAccess = (req, res, next) => {
 
   // L1 and L2 must have assignedAC
   if (req.user.role === "L1" || req.user.role === "L2") {
-    if (!req.user.assignedAC) {
+    const assignedAC = normalizeUserAssignedAC(req.user);
+
+    if (assignedAC === null) {
       return res.status(403).json({
         success: false,
         message: "No AC assigned to your account.",
@@ -148,7 +171,7 @@ export const validateACAccess = (req, res, next) => {
     }
 
     // Store the user's AC for filtering in the route handler
-    req.userAC = req.user.assignedAC;
+    req.userAC = assignedAC;
   }
 
   next();
@@ -170,8 +193,11 @@ export const applyACFilter = (user, query = {}) => {
   }
 
   // L1 and L2 see only their AC
-  if ((user.role === "L1" || user.role === "L2") && user.assignedAC) {
-    query.ac_id = user.assignedAC;
+  if (user.role === "L1" || user.role === "L2") {
+    const assignedAC = normalizeUserAssignedAC(user);
+    if (assignedAC !== null) {
+      query.ac_id = assignedAC;
+    }
   }
 
   return query;
@@ -186,8 +212,13 @@ export const applyACFilter = (user, query = {}) => {
 export const canAccessAC = (user, acId) => {
   if (!user) return false;
   if (user.role === "L0") return true;
-  if ((user.role === "L1" || user.role === "L2") && user.assignedAC) {
-    return user.assignedAC === acId;
+  if (user.role === "L1" || user.role === "L2") {
+    const assignedAC = normalizeUserAssignedAC(user);
+    const requestedAC = toNumericAcId(acId);
+    if (assignedAC === null || requestedAC === null) {
+      return false;
+    }
+    return assignedAC === requestedAC;
   }
   return false;
 };

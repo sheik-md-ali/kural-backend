@@ -84,14 +84,27 @@ export const BoothAgentManagementNew = () => {
     try {
       setLoading(true);
       const [agentsResponse, boothsResponse] = await Promise.all([
-        api.get('/rbac/users?role=BoothAgent'),
+        api.get('/rbac/users?role=Booth Agent'),
         api.get('/rbac/booths')
       ]);
       
       console.log('Fetched agents:', agentsResponse);
       console.log('Fetched booths:', boothsResponse);
       
-      setAgents(agentsResponse.users || []);
+      // Map backend fields to frontend interface
+      const mappedAgents = (agentsResponse.users || []).map((agent: any) => ({
+        ...agent,
+        fullName: agent.name || agent.fullName || '',
+        username: agent.email || agent.username || '',
+        phoneNumber: agent.phone || agent.phoneNumber || '',
+        aci_id: agent.aci_id || agent.assignedAC || 0,
+        aci_name: agent.aci_name || '',
+        booth_id: agent.booth_id || agent.assignedBoothId?._id || agent.assignedBoothId || '',
+        boothCode: agent.assignedBoothId?.boothCode || agent.boothCode || '',
+        boothName: agent.assignedBoothId?.boothName || agent.boothName || '',
+      }));
+      
+      setAgents(mappedAgents);
       setBooths(boothsResponse.booths || []);
     } catch (error: any) {
       console.error('Error fetching data:', error);

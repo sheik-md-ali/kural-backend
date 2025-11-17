@@ -199,6 +199,24 @@ export const FormBuilder = () => {
       };
     });
 
+    if (!formData.assignedACs.length) {
+      toast({
+        title: 'Select constituencies',
+        description: 'Assign the form to at least one assembly constituency.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (normalizedQuestions.length === 0) {
+      toast({
+        title: 'Add at least one question',
+        description: 'Please create a question before saving the survey form.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const payload = {
       title,
       description: formData.description,
