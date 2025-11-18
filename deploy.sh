@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BRANCH="${BRANCH:-main}"
-PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-kural-backend}"
+PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-kuralapp-backend}"
 
 echo "==> Deploying branch: ${BRANCH}"
 
