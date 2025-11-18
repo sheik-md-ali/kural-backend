@@ -15,7 +15,7 @@ Implemented two completely separate and independent modules for managing booths 
 - ✅ Delete booths (soft delete)
 - ✅ Filter booths by Assembly Constituency (for L0/L1 users)
 - ✅ Automatic booth_id and boothCode generation
-- ✅ Real-time data refresh after every operation
+- ✅  Real-time data refresh after every operation
 
 **API Integration:**
 - `GET /api/rbac/booths` - Fetch all booths
