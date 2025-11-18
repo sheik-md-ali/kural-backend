@@ -11,9 +11,14 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
     phone: {
-      type: mongoose.Schema.Types.Mixed,
-      set: (value) => value,
-      get: (value) => value,
+      type: String,
+      set: (value) => {
+        if (!value) return value;
+        // Normalize phone: remove all non-digit characters
+        const normalized = String(value).replace(/\D/g, '');
+        return normalized || value; // Return original if normalization results in empty
+      },
+      trim: true,
     },
     name: {
       type: String,

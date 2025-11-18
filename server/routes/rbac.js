@@ -214,8 +214,8 @@ router.post("/users", isAuthenticated, async (req, res) => {
       });
     }
 
-    // For L1 and L2, assignedAC is required
-    if ((role === "L1" || role === "L2") && !assignedAC && !aci_id) {
+    // For L2, assignedAC is required
+    if ((role === "L2") && !assignedAC && !aci_id) {
       return res.status(400).json({
         success: false,
         message: `assignedAC is required for role ${role}`,
@@ -298,6 +298,18 @@ router.post("/users", isAuthenticated, async (req, res) => {
 });
 
 /**
+ * Normalize phone number - remove spaces, dashes, and keep only digits
+ * @param {string|number} phone - Phone number to normalize
+ * @returns {string} Normalized phone number
+ */
+function normalizePhone(phone) {
+  if (!phone) return phone;
+  // Convert to string and remove all non-digit characters
+  const normalized = String(phone).replace(/\D/g, '');
+  return normalized || phone; // Return original if normalization results in empty string
+}
+
+/**
  * POST /api/rbac/users/booth-agent
  * Create a new booth agent (dedicated endpoint)
  * Access: L0, L1, L2
@@ -326,6 +338,9 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
         message: "All fields are required (username, password, fullName, phoneNumber, booth_id, aci_id)",
       });
     }
+
+    // Normalize phone number
+    const normalizedPhone = normalizePhone(phoneNumber);
 
     // Check creation privileges
     if (req.user.role === "L0") {
@@ -377,10 +392,12 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
     }
 
     // Check if user already exists (by email/username or phone)
+    // Check both normalized and original phone for backward compatibility
     const existingUser = await User.findOne({
       $or: [
         { email: username.toLowerCase() },
-        { phone: phoneNumber },
+        { phone: normalizedPhone },
+        { phone: phoneNumber }, // Also check original format for backward compatibility
       ],
       isActive: true,
     });
@@ -393,14 +410,17 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
     }
 
     // Generate booth_agent_id
-    // Format: phone-001, phone-002, etc.
+    // Format: phone-001, phone-002, etc. (using normalized phone)
     const existingAgents = await User.countDocuments({ 
-      phone: phoneNumber,
-      role: "Booth Agent",
+      $or: [
+        { phone: normalizedPhone },
+        { phone: phoneNumber }
+      ],
+      role: { $in: ["Booth Agent", "BoothAgent"] },
       isActive: true 
     });
     let sequence = existingAgents + 1;
-    let booth_agent_id = `${phoneNumber}-${String(sequence).padStart(3, "0")}`;
+    let booth_agent_id = `${normalizedPhone}-${String(sequence).padStart(3, "0")}`;
 
     // Check if booth_agent_id already exists (unlikely but possible)
     let existingAgentId = await User.findOne({ booth_agent_id });
@@ -416,10 +436,11 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
 
     // Create booth agent user
     // Store username in email field for login purposes
+    // Store normalized phone number for consistency
     const newUser = new User({
       email: username.toLowerCase(),
-      name: fullName,
-      phone: phoneNumber,
+      name: fullName.trim(),
+      phone: normalizedPhone, // Store normalized phone as string
       passwordHash,
       password: passwordHash, // Store in both fields for compatibility
       role: "Booth Agent",

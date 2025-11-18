@@ -73,38 +73,8 @@ const AC_LIST = [
   { value: '126', label: '126 - Madathukulam' },
 ];
 
-// Reserved field names (same as backend)
-const RESERVED_FIELDS = [
-  '_id',
-  'name',
-  'voterID',
-  'address',
-  'DOB',
-  'fathername',
-  'doornumber',
-  'fatherless',
-  'guardian',
-  'age',
-  'gender',
-  'mobile',
-  'emailid',
-  'aadhar',
-  'PAN',
-  'religion',
-  'caste',
-  'subcaste',
-  'booth_id',
-  'boothname',
-  'boothno',
-  'status',
-  'verified',
-  'verifiedAt',
-  'surveyed',
-  'aci_id',
-  'aci_name',
-  'createdAt',
-  'updatedAt',
-];
+// Reserved field names - EMPTY to allow full flexibility
+const RESERVED_FIELDS: string[] = [];
 
 // Helper function to safely render values that might be objects (e.g., {english, tamil})
 const renderValue = (value: any): string => {
@@ -405,14 +375,13 @@ export const VoterFieldManager = () => {
       
       toast({
         title: newVisible ? 'Field Visible' : 'Field Hidden',
-        description: response.message || `Field "${fieldName}" visibility is being updated. Updates are processing in the background.`,
+        description: response.message || `Field "${fieldName}" visibility updated.`,
       });
       
-      // Refresh data asynchronously in the background without blocking
-      setTimeout(() => {
-        fetchFields().catch(console.error);
-        fetchExistingFieldsFromVoters().catch(console.error);
-      }, 2000); // Refresh after 2 seconds to allow updates to process
+      await Promise.all([
+        fetchFields(),
+        fetchExistingFieldsFromVoters()
+      ]);
     } catch (error: any) {
       // Revert optimistic update on error
       setExistingFieldsFromVoters(prev => ({
@@ -657,15 +626,15 @@ export const VoterFieldManager = () => {
                       try {
                         const response = await api.post('/voters/fields/convert-all');
                         toast({
-                          title: 'Fields Converted',
-                          description: response.message || 'All fields have been converted to object format {' + '{ value, visible }' + '}',
+                          title: 'Fields Normalized',
+                          description: response.message || 'Legacy field objects were flattened to primitive values.',
                         });
                         await fetchExistingFieldsFromVoters();
                         await fetchFields();
                       } catch (error: any) {
                         toast({
                           title: 'Error',
-                          description: error.message || 'Failed to convert fields',
+                          description: error.message || 'Failed to normalize fields',
                           variant: 'destructive',
                         });
                       }
@@ -673,11 +642,11 @@ export const VoterFieldManager = () => {
                     className="gap-2"
                   >
                     <Database className="h-4 w-4" />
-                    Convert All to Object Format
+                    Normalize Legacy Fields
                   </Button>
                 </div>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Fields currently found in voter documents with sample data. Click Edit to rename or change data type, or Delete to remove from all voters. Use "Convert All" to ensure all fields are in object format {'{ value, visible }'}.
+                  Fields currently found in voter documents with sample data. Click Edit to rename or change data type, or Delete to remove from all voters. Use "Normalize" if you still have legacy {'{ value, visible }'} objects stored inside voter documents.
                 </p>
                 
                 {loadingExistingFields ? (
@@ -688,12 +657,11 @@ export const VoterFieldManager = () => {
                 ) : Object.keys(existingFieldsFromVoters).length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {Object.entries(existingFieldsFromVoters).map(([fieldName, fieldInfo]) => {
-                      // Case-insensitive check for reserved fields
-                      const isReserved = RESERVED_FIELDS.some(rf => rf.toLowerCase() === fieldName.toLowerCase());
+                      // No reserved fields - full flexibility
+                      const isReserved = false;
                       const isInSchema = fields.find(f => f.name === fieldName || f.name?.toLowerCase() === fieldName.toLowerCase());
-                      // Critical fields that should never be deleted (but can be edited)
-                      const criticalFields = ['_id', 'name', 'voterID', 'voterId', 'createdAt', 'updatedAt'];
-                      const isCritical = criticalFields.some(cf => cf.toLowerCase() === fieldName.toLowerCase());
+                      // No critical fields - all fields can be edited and deleted
+                      const isCritical = false;
                       
                       return (
                         <Card key={fieldName} className="p-3 bg-white">
@@ -701,9 +669,6 @@ export const VoterFieldManager = () => {
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-1">
                                 <span className="font-semibold text-sm">{fieldName}</span>
-                                {isReserved && (
-                                  <Badge variant="outline" className="text-xs">System</Badge>
-                                )}
                                 {isInSchema && (
                                   <Badge variant="secondary" className="text-xs">In Schema</Badge>
                                 )}
@@ -754,18 +719,16 @@ export const VoterFieldManager = () => {
                               >
                                 <Edit className="h-3 w-3" />
                               </Button>
-                              {/* Delete button - hidden only for critical/system fields */}
-                              {!isCritical && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteExistingField(fieldName)}
-                                  className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                                  title={isReserved ? `Delete field "${fieldName}" from ALL voters (Warning: System field)` : `Delete field "${fieldName}" from ALL voters`}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              )}
+                              {/* Delete button - available for all fields */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteExistingField(fieldName)}
+                                className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                title={`Delete field "${fieldName}" from ALL voters`}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
                             </div>
                           </div>
                           
@@ -840,29 +803,22 @@ export const VoterFieldManager = () => {
                               </Badge>
                             </div>
                             <div className="flex gap-1">
-                              {!field.isReserved && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleEditField(field)}
-                                >
-                                  <Edit className="h-4 w-4" />
-                                </Button>
-                              )}
-                              {!field.isReserved && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteField(field.name)}
-                                  className="text-destructive hover:text-destructive"
-                                  title={`Delete field "${field.name}" from ALL voters`}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              )}
-                              {field.isReserved && (
-                                <Badge variant="outline" className="text-xs">System Field</Badge>
-                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditField(field)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteField(field.name)}
+                                className="text-destructive hover:text-destructive"
+                                title={`Delete field "${field.name}" from ALL voters`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
                             </div>
                           </div>
                           {field.label && (
@@ -1931,4 +1887,7 @@ export const VoterFieldManager = () => {
     </DashboardLayout>
   );
 };
+
+
+
 

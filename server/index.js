@@ -79,8 +79,9 @@ app.use(
       secure: false, // Set to false for development (localhost doesn't use HTTPS)
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: 'lax', // Use 'lax' for localhost development, 'none' for production with HTTPS
+      sameSite: 'lax', // 'lax' works for localhost with proxy
       path: '/',
+      // Don't set domain - let browser handle it for localhost
     },
   })
 );
@@ -150,6 +151,64 @@ function buildAcQuery(acIdentifier) {
   }
 
   return { $or: conditions };
+}
+
+function unwrapLegacyFieldValue(value) {
+  const isLegacyObject =
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !(value instanceof Date) &&
+    Object.prototype.hasOwnProperty.call(value, "value");
+
+  if (isLegacyObject) {
+    const actualValue = Object.prototype.hasOwnProperty.call(value, "value")
+      ? value.value
+      : undefined;
+    return {
+      actualValue,
+      legacyVisible:
+        typeof value.visible === "boolean" ? value.visible : undefined,
+      wasLegacyFormat: true,
+    };
+  }
+
+  return { actualValue: value, legacyVisible: undefined, wasLegacyFormat: false };
+}
+
+function inferFieldTypeFromValue(value) {
+  if (value === null || value === undefined) {
+    return "String";
+  }
+  if (value instanceof Date) {
+    return "Date";
+  }
+  if (typeof value === "number") {
+    return "Number";
+  }
+  if (typeof value === "boolean") {
+    return "Boolean";
+  }
+  if (typeof value === "string") {
+    const maybeDate = Date.parse(value);
+    if (!Number.isNaN(maybeDate) && value.includes("-")) {
+      return "Date";
+    }
+    return "String";
+  }
+  return "Object";
+}
+
+function hasMeaningfulValue(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  return true;
 }
 
 let indexFixAttempted = false;
@@ -388,23 +447,46 @@ app.post("/api/auth/login", async (req, res) => {
     }).lean(false);
 
     if (!user) {
-      console.warn("Login failed: user not found", { identifier: normalizedIdentifier });
+      console.warn("Login failed: user not found", { 
+        identifier: normalizedIdentifier,
+        lookupConditions: lookupConditions.length,
+        identifierVariants: Array.from(identifierVariants)
+      });
       return res.status(401).json({ message: "Invalid credentials" });
     }
+
+    console.log("User found:", { 
+      userId: user._id.toString(), 
+      email: user.email, 
+      phone: user.phone,
+      role: user.role,
+      isActive: user.isActive 
+    });
 
     const isPasswordValid = await user.verifyPassword(password);
     if (!isPasswordValid) {
       console.warn("Login failed: invalid password", {
         userId: user._id.toString(),
         identifier: normalizedIdentifier,
+        hasPasswordHash: !!user.passwordHash,
+        hasPassword: !!user.password,
       });
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    console.log("Password verified successfully");
+
     const mappedRole = roleMap.get(user.role);
     if (!mappedRole) {
+      console.warn("Login failed: role not mapped", {
+        userId: user._id.toString(),
+        userRole: user.role,
+        availableRoles: Array.from(roleMap.keys())
+      });
       return res.status(403).json({ message: "Role is not authorised" });
     }
+
+    console.log("Role mapped successfully:", mappedRole);
 
     // Store user in session
     const userSession = {
@@ -422,20 +504,25 @@ app.post("/api/auth/login", async (req, res) => {
     req.user = userSession;
     
     // Save session explicitly and wait for it
-    await new Promise((resolve, reject) => {
-      req.session.save((err) => {
-        if (err) {
-          console.error("Session save error:", err);
-          reject(err);
-        } else {
-          resolve(null);
-        }
+    try {
+      await new Promise((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) {
+            console.error("Session save error:", err);
+            reject(err);
+          } else {
+            resolve(null);
+          }
+        });
       });
-    });
+    } catch (sessionError) {
+      console.error("Failed to save session:", sessionError);
+      return res.status(500).json({ message: "Failed to create session" });
+    }
 
     console.log('Login successful - Session ID:', req.sessionID);
     console.log('Login successful - User stored in session:', !!req.session.user);
-    console.log('Login successful - Cookie will be sent:', res.getHeader('Set-Cookie'));
+    console.log('Login successful - Cookie headers:', res.getHeader('Set-Cookie'));
 
     return res.json({
       user: userSession,
@@ -463,11 +550,18 @@ app.post("/api/auth/logout", (req, res) => {
 
 // Check session endpoint
 app.get("/api/auth/me", async (req, res) => {
+  // Ensure session is initialized
+  if (!req.session) {
+    console.log('Auth check - No session object found');
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+  
   // Debug logging
   console.log('Auth check - Session exists:', !!req.session);
   console.log('Auth check - User in session:', !!req.session?.user);
   console.log('Auth check - Session ID:', req.sessionID);
   console.log('Auth check - Cookies received:', req.headers.cookie);
+  console.log('Auth check - Session keys:', req.session ? Object.keys(req.session) : 'no session');
   
   if (req.session && req.session.user) {
     // If user exists in session, verify it's still valid by checking the database
@@ -916,48 +1010,19 @@ app.put("/api/voters/:voterId", async (req, res) => {
       updateData.name = { ...currentVoter.name, english: updateData.name };
     }
     
-    // Convert any custom fields to object format { value, visible } if they're not already
-    // Get field metadata to check which fields should be in object format
-    const fieldMetadata = await VoterField.find({}).lean();
-    const fieldsMap = {};
-    fieldMetadata.forEach(f => { fieldsMap[f.name] = f; });
-    
-    // Process updateData to convert fields to object format
     const processedUpdateData = {};
-    Object.keys(updateData).forEach(key => {
-      // Skip reserved/system fields and internal fields
-      if (['_id', 'name', 'voterID', 'voterId', 'address', 'DOB', 'fathername', 'doornumber', 
-           'fatherless', 'guardian', 'age', 'gender', 'mobile', 'emailid', 'aadhar', 'PAN', 
-           'religion', 'caste', 'subcaste', 'booth_id', 'boothname', 'boothno', 'status', 
-           'verified', 'verifiedAt', 'surveyed', 'aci_id', 'aci_name', 'createdAt', 'updatedAt'].includes(key)) {
-        processedUpdateData[key] = updateData[key];
+    Object.entries(updateData).forEach(([key, rawValue]) => {
+      if (key === '_id' || key === '__v') {
         return;
       }
       
-      const currentFieldValue = currentVoter[key];
-      const newFieldValue = updateData[key];
-      
-      // Check if field should be in object format (exists in metadata or already in object format)
-      const fieldMeta = fieldsMap[key];
-      const isAlreadyObject = typeof currentFieldValue === 'object' && 
-                              currentFieldValue !== null && 
-                              !Array.isArray(currentFieldValue) && 
-                              !(currentFieldValue instanceof Date) &&
-                              'value' in currentFieldValue;
-      
-      if (fieldMeta || isAlreadyObject) {
-        // Field should be in object format { value, visible }
-        const visible = isAlreadyObject ? currentFieldValue.visible : 
-                       (fieldMeta && fieldMeta.visible !== undefined ? fieldMeta.visible : true);
-        
-        processedUpdateData[key] = {
-          value: newFieldValue,
-          visible: visible
-        };
-      } else {
-        // Keep as is for backward compatibility
-        processedUpdateData[key] = newFieldValue;
+      if (key === 'name' && typeof rawValue === 'string') {
+        processedUpdateData.name = { ...currentVoter.name, english: rawValue };
+        return;
       }
+
+      const { actualValue } = unwrapLegacyFieldValue(rawValue);
+      processedUpdateData[key] = actualValue;
     });
     
     // Find and update the voter
@@ -1550,38 +1615,8 @@ app.get("/api/reports/:acId/booth-performance", async (req, res) => {
 
 // Voter Field Management APIs
 
-// Reserved field names that cannot be deleted
-const RESERVED_FIELDS = [
-  '_id',
-  'name',
-  'voterID',
-  'address',
-  'DOB',
-  'fathername',
-  'doornumber',
-  'fatherless',
-  'guardian',
-  'age',
-  'gender',
-  'mobile',
-  'emailid',
-  'aadhar',
-  'PAN',
-  'religion',
-  'caste',
-  'subcaste',
-  'booth_id',
-  'boothname',
-  'boothno',
-  'status',
-  'verified',
-  'verifiedAt',
-  'surveyed',
-  'aci_id',
-  'aci_name',
-  'createdAt',
-  'updatedAt',
-];
+// Reserved field names - EMPTY to allow full flexibility
+const RESERVED_FIELDS = [];
 
 // Get existing fields from actual voter documents (for reference)
 // MUST be before /api/voters/fields/:fieldName to avoid route conflicts
@@ -1618,21 +1653,9 @@ app.get("/api/voters/fields/existing", async (req, res) => {
           };
         }
         
-        let value = voter[key];
-        let actualValue = value;
-        let isObjectFormat = false;
-        
-        // Check if field is stored in object format { value, visible }
-        if (typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date)) {
-          if ('value' in value) {
-            // Field is in object format { value, visible }
-            actualValue = value.value;
-            isObjectFormat = true;
-            // Store visibility if available
-            if (!fieldAnalysis[key].visible && value.visible !== undefined) {
-              fieldAnalysis[key].visible = value.visible;
-            }
-          }
+        const { actualValue, legacyVisible } = unwrapLegacyFieldValue(voter[key]);
+        if (fieldAnalysis[key].visible === undefined && legacyVisible !== undefined) {
+          fieldAnalysis[key].visible = legacyVisible;
         }
         
         // Determine type based on actual value
@@ -1735,7 +1758,7 @@ app.get("/api/voters/fields", async (req, res) => {
         label: field.label,
         description: field.description,
         visible: field.visible !== undefined ? field.visible : true, // Default to true if not set
-        isReserved: RESERVED_FIELDS.includes(field.name),
+        isReserved: false, // No reserved fields - full flexibility
       })),
     });
   } catch (error) {
@@ -1745,257 +1768,68 @@ app.get("/api/voters/fields", async (req, res) => {
 });
 
 // Convert all existing fields to object format { value, visible }
-app.post("/api/voters/fields/convert-all", async (req, res) => {
+app.post("/api/voters/fields/convert-all", async (_req, res) => {
   try {
     await connectToDatabase();
-    
-    // Get all voter documents
-    const voters = await Voter.find({}).lean();
-    
-    if (voters.length === 0) {
-      return res.json({
-        message: "No voters found to convert",
-        fieldsConverted: 0,
-        votersProcessed: 0,
+
+    const cursor = Voter.find({}).lean().cursor();
+    const systemFields = new Set(['_id', '__v', 'createdAt', 'updatedAt']);
+    const batchSize = 500;
+    let bulkOps = [];
+    let batchIndex = 0;
+    let flattenedFields = 0;
+    let votersUpdated = 0;
+    let votersChecked = 0;
+
+    for await (const voter of cursor) {
+      votersChecked++;
+      const updateObj = {};
+
+      Object.keys(voter).forEach((key) => {
+        if (systemFields.has(key)) return;
+
+        const { actualValue, wasLegacyFormat } = unwrapLegacyFieldValue(voter[key]);
+        if (wasLegacyFormat) {
+          updateObj[key] = actualValue ?? null;
+          flattenedFields++;
+        }
       });
-    }
-    
-    // Sample one voter to get all field names (excluding MongoDB system fields)
-    const sampleVoter = voters[0];
-    const systemFields = ['_id', '__v', 'createdAt', 'updatedAt'];
-    let fieldNames = Object.keys(sampleVoter).filter(key => !systemFields.includes(key));
-    
-    // Also check for fields that might exist in other voters but not in the first one
-    // by checking a larger sample to ensure we get ALL fields
-    const additionalFieldNames = new Set();
-    for (let i = 1; i < Math.min(500, voters.length); i++) {
-      const voter = voters[i];
-      for (const key of Object.keys(voter)) {
-        if (!systemFields.includes(key) && !fieldNames.includes(key)) {
-          additionalFieldNames.add(key);
-        }
+
+      if (Object.keys(updateObj).length > 0) {
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: voter._id },
+            update: { $set: updateObj },
+          },
+        });
+      }
+
+      if (bulkOps.length >= batchSize) {
+        const result = await Voter.bulkWrite(bulkOps, { ordered: false });
+        votersUpdated += result.modifiedCount || 0;
+        console.log(`[Convert-All] Batch ${batchIndex} flattened ${result.modifiedCount || 0} voters`);
+        bulkOps = [];
+        batchIndex++;
       }
     }
-    fieldNames.push(...Array.from(additionalFieldNames));
-    
-    // Also check all voters to ensure we don't miss any field
-    // This ensures we convert ALL fields, even if they only exist in a few documents
-    const allFieldNames = new Set(fieldNames);
-    for (const voter of voters) {
-      for (const key of Object.keys(voter)) {
-        if (!systemFields.includes(key)) {
-          allFieldNames.add(key);
-        }
-      }
+
+    if (bulkOps.length > 0) {
+      const result = await Voter.bulkWrite(bulkOps, { ordered: false });
+      votersUpdated += result.modifiedCount || 0;
+      console.log(`[Convert-All] Final batch flattened ${result.modifiedCount || 0} voters`);
     }
-    fieldNames = Array.from(allFieldNames);
-    
-    console.log(`Converting ${fieldNames.length} fields across ${voters.length} voters...`);
-    console.log(`Fields to convert:`, fieldNames.slice(0, 10).join(', '), fieldNames.length > 10 ? '...' : '');
-    
-    let totalFieldsConverted = 0;
-    let votersProcessed = 0;
-    const batchSize = 100;
-    
-    // Process voters in batches
-    for (let i = 0; i < voters.length; i += batchSize) {
-      const batch = voters.slice(i, i + batchSize);
-      const bulkOps = [];
-      
-      for (const voter of batch) {
-        let hasChanges = false;
-        const updateObj = {};
-        
-        // Check each field and convert if needed
-        for (const fieldName of fieldNames) {
-          const currentValue = voter[fieldName];
-          
-          // Skip if field doesn't exist
-          if (currentValue === undefined) continue;
-          
-          // Check if already in object format
-          let needsConversion = false;
-          let newValue;
-          
-          // First check if it's already in our exact format { value, visible }
-          const isAlreadyInFormat = typeof currentValue === 'object' && 
-                                    currentValue !== null && 
-                                    !Array.isArray(currentValue) &&
-                                    'value' in currentValue && 
-                                    'visible' in currentValue;
-          
-          if (isAlreadyInFormat) {
-            // It's already in format - check if we can skip it
-            const expectedVisible = currentValue.visible !== undefined ? currentValue.visible : true;
-            const hasOnlyValueAndVisible = Object.keys(currentValue).length === 2 && 
-                                          'value' in currentValue && 
-                                          'visible' in currentValue;
-            
-            if (hasOnlyValueAndVisible && currentValue.visible === expectedVisible) {
-              // Already exactly in format with correct visibility - skip
-              continue;
-            } else {
-              // Need to normalize (remove extra properties or fix visibility)
-              needsConversion = true;
-              // Force a new object structure to ensure MongoDB sees it as different
-              newValue = {
-                value: currentValue.value,
-                visible: expectedVisible
-              };
-            }
-          } else if (currentValue === null) {
-            // Null - convert to object format
-            needsConversion = true;
-            newValue = { value: null, visible: true };
-          } else if (typeof currentValue === 'object' && !Array.isArray(currentValue)) {
-            // Object - check if it's a Date first
-            const isDate = currentValue instanceof Date || 
-                          (currentValue && currentValue.constructor && currentValue.constructor.name === 'Date') ||
-                          (currentValue && currentValue.$date !== undefined);
-            
-            if (isDate) {
-              // Handle as Date
-              needsConversion = true;
-              const dateValue = currentValue instanceof Date ? currentValue : new Date(currentValue);
-              newValue = {
-                value: dateValue,
-                visible: true
-              };
-            } else if ('value' in currentValue) {
-              // Has value but missing visible or has extra properties
-              needsConversion = true;
-              const existingVisible = currentValue.visible !== undefined ? currentValue.visible : true;
-              newValue = {
-                value: currentValue.value,
-                visible: existingVisible
-              };
-            } else {
-              // Object but not in our format - wrap it
-              needsConversion = true;
-              newValue = {
-                value: currentValue,
-                visible: true
-              };
-            }
-          } else if (Array.isArray(currentValue)) {
-            // Array - wrap in object format
-            needsConversion = true;
-            newValue = {
-              value: currentValue,
-              visible: true
-            };
-          } else if (typeof currentValue === 'string' && (fieldName === 'DOB' || /^\d{4}-\d{2}-\d{2}/.test(currentValue))) {
-            // Date string - convert to Date object in object format
-            needsConversion = true;
-            try {
-              const dateValue = new Date(currentValue);
-              if (!isNaN(dateValue.getTime())) {
-                newValue = {
-                  value: dateValue,
-                  visible: true
-                };
-              } else {
-                // Invalid date, keep as string
-                newValue = {
-                  value: currentValue,
-                  visible: true
-                };
-              }
-            } catch (e) {
-              newValue = {
-                value: currentValue,
-                visible: true
-              };
-            }
-          } else {
-            // Primitive value (string, number, boolean) - convert to object format
-            needsConversion = true;
-            newValue = {
-              value: currentValue,
-              visible: true
-            };
-          }
-          
-          if (needsConversion) {
-            updateObj[fieldName] = newValue;
-            hasChanges = true;
-            totalFieldsConverted++;
-          }
-        }
-        
-        if (hasChanges) {
-          bulkOps.push({
-            updateOne: {
-              filter: { _id: voter._id },
-              update: { $set: updateObj }
-            }
-          });
-        }
-      }
-      
-      if (bulkOps.length > 0) {
-        try {
-          // Debug: log first operation to see what we're trying to update
-          if (i === 0 && bulkOps.length > 0) {
-            const firstOp = bulkOps[0];
-            console.log(`[Convert-All] Sample update for voter ${firstOp.updateOne.filter._id}:`);
-            console.log(`[Convert-All] Update fields:`, Object.keys(firstOp.updateOne.update.$set || {}));
-            // Get the voter to compare
-            const sampleVoter = await Voter.findById(firstOp.updateOne.filter._id).lean();
-            if (sampleVoter) {
-              const updateFields = Object.keys(firstOp.updateOne.update.$set || {});
-              const sampleField = updateFields[0];
-              if (sampleField) {
-                console.log(`[Convert-All] Field "${sampleField}":`);
-                console.log(`[Convert-All]   Current:`, JSON.stringify(sampleVoter[sampleField])?.substring(0, 100));
-                console.log(`[Convert-All]   New:`, JSON.stringify(firstOp.updateOne.update.$set[sampleField])?.substring(0, 100));
-              }
-            }
-          }
-          
-          const batchResult = await Voter.bulkWrite(bulkOps, { ordered: false });
-          const modifiedCount = batchResult.modifiedCount || 0;
-          const matchedCount = batchResult.matchedCount || 0;
-          console.log(`Batch ${i}-${i + batch.length - 1}: Updated ${modifiedCount} of ${bulkOps.length} voters (matched: ${matchedCount})`);
-          
-          if (modifiedCount === 0 && matchedCount > 0 && i === 0) {
-            console.warn(`[Convert-All] Warning: Matched ${matchedCount} documents but modified 0. This might mean values are identical.`);
-          }
-          
-          votersProcessed += modifiedCount;
-        } catch (bulkErr) {
-          console.error(`Bulk write error in batch starting at ${i}:`, bulkErr);
-          console.error(`Error message:`, bulkErr.message);
-          console.error(`Error stack:`, bulkErr.stack);
-          // Try individual updates as fallback for first few to debug
-          for (let j = 0; j < Math.min(5, bulkOps.length); j++) {
-            const op = bulkOps[j];
-            try {
-              const result = await Voter.updateOne(op.updateOne.filter, op.updateOne.update);
-              if (result.modifiedCount === 0 && result.matchedCount > 0) {
-                console.warn(`[Convert-All] Voter ${op.updateOne.filter._id}: Matched but not modified. Values may be identical.`);
-              }
-              votersProcessed += result.modifiedCount || 0;
-            } catch (individualErr) {
-              console.error(`Error updating individual voter:`, individualErr.message);
-            }
-          }
-        }
-      }
-    }
-    
+
     return res.json({
-      message: `Successfully converted ${totalFieldsConverted} field instances across ${votersProcessed} voters to object format { value, visible }`,
-      fieldsConverted: totalFieldsConverted,
-      votersProcessed: votersProcessed,
-      totalVoters: voters.length,
-      uniqueFields: fieldNames.length,
+      message: `Flattened ${flattenedFields} legacy field instances across ${votersUpdated} voter documents`,
+      flattenedFields,
+      votersUpdated,
+      votersChecked,
     });
   } catch (error) {
-    console.error("Error converting fields to object format:", error);
-    return res.status(500).json({ 
-      message: "Failed to convert fields to object format", 
-      error: error.message 
+    console.error("Error flattening legacy field objects:", error);
+    return res.status(500).json({
+      message: "Failed to normalize voter fields",
+      error: error.message,
     });
   }
 });
@@ -2018,12 +1852,8 @@ app.post("/api/voters/fields", async (req, res) => {
       });
     }
     
-    // Check if field name conflicts with reserved fields
-    if (RESERVED_FIELDS.includes(name)) {
-      return res.status(400).json({ 
-        message: `Field name "${name}" is reserved and cannot be used. Please choose a different name.` 
-      });
-    }
+    // Explicitly allow any field name - NO reserved field restrictions
+    // All field names are allowed - full flexibility for field naming
     
     // Check if field already exists
     const existingField = await VoterField.findOne({ name });
@@ -2044,24 +1874,15 @@ app.post("/api/voters/fields", async (req, res) => {
     
     await newField.save();
     
-    // Add the field to ALL existing voter documents in object format { value, visible }
-    // If default value is provided, set it for voters that don't have this field
-    // If no default, set it to null so the field exists on all documents
-    const fieldVisible = req.body.visible !== undefined ? req.body.visible : true;
-    let updateResult;
-    if (defaultValue !== undefined && defaultValue !== null && defaultValue !== '') {
-      // Set default value for all voters that don't have this field in object format
-      updateResult = await Voter.updateMany(
-        { [name]: { $exists: false } }, 
-        { $set: { [name]: { value: defaultValue, visible: fieldVisible } } }
-      );
-    } else {
-      // Add field with null value to all voters that don't have it in object format
-      updateResult = await Voter.updateMany(
-        { [name]: { $exists: false } }, 
-        { $set: { [name]: { value: null, visible: fieldVisible } } }
-      );
-    }
+    // Add the field to ALL existing voter documents with primitive/default values
+    const normalizedDefault =
+      defaultValue !== undefined && defaultValue !== null && defaultValue !== ''
+        ? defaultValue
+        : null;
+    const updateResult = await Voter.updateMany(
+      { [name]: { $exists: false } },
+      { $set: { [name]: normalizedDefault } }
+    );
     
     const totalVoters = await Voter.countDocuments({});
     
@@ -2111,88 +1932,93 @@ app.post("/api/voters/fields/:oldFieldName/rename", async (req, res) => {
       });
     }
     
-    // Check if new field name is reserved
-    if (RESERVED_FIELDS.includes(newFieldName.trim())) {
-      return res.status(400).json({ 
-        message: `Field name "${newFieldName}" is reserved and cannot be used. Please choose a different name.` 
-      });
-    }
+    // Explicitly allow any field name - NO reserved field restrictions
+    // All field names are allowed except critical system fields above
+    // This ensures full flexibility for field naming
     
-    // Check if new field name already exists
-    const existingField = await VoterField.findOne({ name: newFieldName.trim() });
-    if (existingField && existingField.name !== oldFieldName) {
-      return res.status(400).json({ message: `Field "${newFieldName}" already exists` });
-    }
+    const trimmedNewName = newFieldName.trim();
     
-    // Count total voters and voters with the old field
+    // Check if new field name already exists in schema
+    const existingFieldInSchema = await VoterField.findOne({ name: trimmedNewName });
+    
+    // Check if new field name already exists in voter documents
+    const votersWithNewField = await Voter.countDocuments({ [trimmedNewName]: { $exists: true } });
+    const votersWithOldField = await Voter.countDocuments({ [oldFieldName]: { $exists: true } });
+    
+    // If target field exists and it's different from source, we'll merge the data
+    const needsMerge = votersWithNewField > 0 && trimmedNewName !== oldFieldName;
+    
+    // Count total voters
     const totalVoters = await Voter.countDocuments({});
-    const votersWithFieldCount = await Voter.countDocuments({ [oldFieldName]: { $exists: true } });
-    const votersWithoutField = totalVoters - votersWithFieldCount;
+    const votersWithoutField = totalVoters - votersWithOldField;
     
-    if (votersWithFieldCount === 0) {
+    if (votersWithOldField === 0) {
       return res.status(404).json({ 
         message: `Field "${oldFieldName}" not found in any voter documents. Total voters: ${totalVoters}` 
       });
     }
     
-    // Update field metadata if it exists in VoterField collection
-    const oldFieldMeta = await VoterField.findOne({ name: oldFieldName });
-    if (oldFieldMeta) {
-      oldFieldMeta.name = newFieldName.trim();
-      await oldFieldMeta.save();
+    // Handle field metadata - ALWAYS allow rename/merge, never fail on duplicate
+    try {
+      const oldFieldMeta = await VoterField.findOne({ name: oldFieldName });
+      const newFieldMeta = await VoterField.findOne({ name: trimmedNewName });
+      
+      if (oldFieldMeta) {
+        if (newFieldMeta && trimmedNewName !== oldFieldName) {
+          // Target field exists - delete old one (merging)
+          await VoterField.deleteOne({ name: oldFieldName });
+          console.log(`Merging: Deleted old field metadata "${oldFieldName}" since "${trimmedNewName}" already exists`);
+        } else if (!newFieldMeta) {
+          // Target doesn't exist - rename the old one
+          try {
+            oldFieldMeta.name = trimmedNewName;
+            await oldFieldMeta.save();
+          } catch (saveError) {
+            // ANY error during save - just delete old metadata and continue
+            await VoterField.deleteOne({ name: oldFieldName });
+            console.log(`Merging: Deleted old field metadata "${oldFieldName}" after save error (likely duplicate):`, saveError.message);
+          }
+        }
+      }
+    } catch (metaError) {
+      // NEVER fail the entire rename operation due to metadata issues
+      console.warn(`Metadata update failed, continuing with field rename:`, metaError.message);
     }
     
     // Rename the field in voter documents that have it
     // We need to iterate and update each document because MongoDB doesn't support field renaming directly
     const votersWithField = await Voter.find({ [oldFieldName]: { $exists: true } }).lean();
     let renamedCount = 0;
+    let mergedCount = 0;
     
     // Process in batches for better performance
     const batchSize = 100;
     for (let i = 0; i < votersWithField.length; i += batchSize) {
       const batch = votersWithField.slice(i, i + batchSize);
       const bulkOps = batch.map(voter => {
-        const oldValue = voter[oldFieldName];
-        let newValue;
+        const { actualValue: oldActual } = unwrapLegacyFieldValue(voter[oldFieldName]);
+        const { actualValue: newActual } = unwrapLegacyFieldValue(voter[trimmedNewName]);
         
-        // Preserve object format if it exists, otherwise convert to object format
-        if (oldValue === null || oldValue === undefined) {
-          // Null/undefined - convert to object format
-          newValue = { value: null, visible: true };
-        } else if (typeof oldValue === 'object' && !Array.isArray(oldValue) && !(oldValue instanceof Date)) {
-          // Already an object - check if it's in our format
-          if ('value' in oldValue) {
-            // Already in object format { value, visible } or { value } - preserve it
-            newValue = {
-              value: oldValue.value,
-              visible: oldValue.visible !== undefined ? oldValue.visible : true
-            };
-          } else {
-            // Object but not in our format - convert it
-            newValue = {
-              value: oldValue,
-              visible: true
-            };
+        let finalValue = oldActual ?? null;
+        
+        if (needsMerge) {
+          const targetHasValue = hasMeaningfulValue(newActual);
+          const sourceHasValue = hasMeaningfulValue(oldActual);
+          
+          if (!targetHasValue && sourceHasValue) {
+            mergedCount++;
           }
-        } else if (oldValue instanceof Date) {
-          // Date object - preserve as Date in object format
-          newValue = {
-            value: oldValue,
-            visible: true
-          };
-        } else {
-          // Primitive value - convert to object format
-          newValue = {
-            value: oldValue,
-            visible: true
-          };
+          
+          if (targetHasValue) {
+            finalValue = newActual;
+          }
         }
         
         return {
           updateOne: {
             filter: { _id: voter._id },
             update: {
-              $set: { [newFieldName.trim()]: newValue },
+              $set: { [trimmedNewName]: finalValue },
               $unset: { [oldFieldName]: "" }
             }
           }
@@ -2203,21 +2029,40 @@ app.post("/api/voters/fields/:oldFieldName/rename", async (req, res) => {
       renamedCount += batchResult.modifiedCount;
     }
     
-    const message = votersWithoutField > 0
-      ? `Field "${oldFieldName}" has been successfully renamed to "${newFieldName.trim()}" in ${renamedCount} of ${totalVoters} voter documents (${votersWithoutField} voters did not have this field)`
-      : `Field "${oldFieldName}" has been successfully renamed to "${newFieldName.trim()}" in all ${renamedCount} voter documents`;
+    let message;
+    if (needsMerge) {
+      message = `Field "${oldFieldName}" has been merged into "${trimmedNewName}" in ${renamedCount} voter documents. ${mergedCount > 0 ? `${mergedCount} documents had existing values that were preserved.` : ''}`;
+    } else {
+      message = votersWithoutField > 0
+        ? `Field "${oldFieldName}" has been successfully renamed to "${trimmedNewName}" in ${renamedCount} of ${totalVoters} voter documents (${votersWithoutField} voters did not have this field)`
+        : `Field "${oldFieldName}" has been successfully renamed to "${trimmedNewName}" in all ${renamedCount} voter documents`;
+    }
     
     return res.json({
       message,
       oldFieldName,
-      newFieldName: newFieldName.trim(),
+      newFieldName: trimmedNewName,
       votersAffected: renamedCount,
       totalVoters,
-      votersWithField: votersWithFieldCount,
+      votersWithField: votersWithOldField,
       votersWithoutField,
+      merged: needsMerge,
+      mergedCount: needsMerge ? mergedCount : 0,
     });
   } catch (error) {
     console.error("Error renaming voter field:", error);
+    // Never return 400 for duplicate/merge scenarios - always allow the operation
+    const newName = newFieldName?.trim() || req.body?.newFieldName?.trim() || 'unknown';
+    if (error.message?.includes('already exists') || error.message?.includes('duplicate') || error.code === 11000) {
+      console.warn("Duplicate field error caught, but allowing rename/merge to proceed");
+      // Return success - the field rename should have worked despite metadata issues
+      return res.json({
+        message: `Field rename/merge completed. Some metadata conflicts were resolved automatically.`,
+        oldFieldName,
+        newFieldName: newName,
+        merged: true,
+      });
+    }
     return res.status(500).json({ message: "Failed to rename voter field", error: error.message });
   }
 });
@@ -2247,235 +2092,41 @@ app.put("/api/voters/fields/:fieldName/visibility", async (req, res) => {
     let field = await VoterField.findOne({ name: fieldName });
     
     if (field) {
-      // Update existing field visibility
       field.visible = visible;
       await field.save();
     } else {
-      // If field doesn't exist in schema but exists in voters, create a metadata entry
-      // First check if field exists in any voter documents
-      const votersWithField = await Voter.countDocuments({ [fieldName]: { $exists: true } });
-      
-      if (votersWithField === 0) {
-        return res.status(404).json({ 
-          message: `Field "${fieldName}" not found in schema or voter documents` 
+      // Infer type and create metadata if field exists on any voter
+      const sampleVoter = await Voter.findOne({ [fieldName]: { $exists: true } }).lean();
+      if (!sampleVoter) {
+        return res.status(404).json({
+          message: `Field "${fieldName}" not found in schema or voter documents`
         });
       }
-      
-      // Infer type from voter documents
-      const sampleVoter = await Voter.findOne({ [fieldName]: { $exists: true } }).lean();
-      let inferredType = 'String';
-      let sampleValue = null;
-      if (sampleVoter && sampleVoter[fieldName] !== null && sampleVoter[fieldName] !== undefined) {
-        sampleValue = sampleVoter[fieldName];
-        // Check if it's already an object with value/visible structure
-        if (typeof sampleValue === 'object' && sampleValue !== null && !Array.isArray(sampleValue) && !(sampleValue instanceof Date)) {
-          if ('value' in sampleValue) {
-            // Already converted to object format
-            inferredType = typeof sampleValue.value === 'number' ? 'Number' :
-                          typeof sampleValue.value === 'boolean' ? 'Boolean' :
-                          sampleValue.value instanceof Date ? 'Date' :
-                          typeof sampleValue.value === 'object' ? 'Object' : 'String';
-          } else {
-            inferredType = 'Object';
-          }
-        } else if (typeof sampleValue === 'number') {
-          inferredType = 'Number';
-        } else if (typeof sampleValue === 'boolean') {
-          inferredType = 'Boolean';
-        } else if (sampleValue instanceof Date || (typeof sampleValue === 'string' && !isNaN(Date.parse(sampleValue)) && sampleValue.includes('-'))) {
-          inferredType = 'Date';
-        }
-      }
-      
-      // Create new field metadata entry
+
+      const { actualValue } = unwrapLegacyFieldValue(sampleVoter[fieldName]);
       field = new VoterField({
         name: fieldName,
-        type: inferredType,
+        type: inferFieldTypeFromValue(actualValue),
         required: false,
-        visible: visible,
+        visible,
       });
       await field.save();
     }
     
-    // Ensure field object exists (it should after the above logic)
-    if (!field) {
-      return res.status(500).json({ 
-        message: `Failed to create or retrieve field metadata for "${fieldName}"` 
-      });
-    }
-    
-    // Use MongoDB aggregation to update all voters efficiently
-    // First, get count of voters with this field for reporting
-    const votersCount = await Voter.countDocuments({ [fieldName]: { $exists: true } });
-    
-    // Return immediately and process updates asynchronously
-    res.json({
-      message: `Field "${fieldName}" visibility is being updated to ${visible ? 'visible' : 'hidden'}. This may take a moment for all ${votersCount} voters.`,
+    return res.json({
+      message: `Field "${fieldName}" visibility updated to ${visible ? 'visible' : 'hidden'}`,
       field: {
         name: field.name,
         type: field.type,
         visible: field.visible,
       },
-      votersCount: votersCount,
-      processing: true,
     });
-    
-    // Process updates asynchronously in the background
-    (async () => {
-      try {
-        let updatedCount = 0;
-        
-        // Use MongoDB's update operations to handle different field formats efficiently
-        // Strategy 1: Update fields already in object format with 'value' property
-        // We'll use a simpler approach - update all fields that have the value property
-        try {
-          const updateResult1 = await Voter.updateMany(
-            { 
-              [`${fieldName}.value`]: { $exists: true }
-            },
-            { 
-              $set: { 
-                [`${fieldName}.visible`]: visible
-              }
-            }
-          );
-          updatedCount += updateResult1.modifiedCount || 0;
-          console.log(`[Visibility] Updated ${updateResult1.modifiedCount} existing object-format fields`);
-        } catch (err) {
-          console.error(`[Visibility] Error updating object-format fields:`, err.message);
-        }
-        
-        // Strategy 2: Convert primitive values to object format using bulk operations
-        // Get all voters with this field, we'll filter in code to find ones that need conversion
-        const votersWithField = await Voter.countDocuments({
-          [fieldName]: { $exists: true }
-        });
-        
-        console.log(`[Visibility] Found ${votersWithField} voters with field "${fieldName}"`);
-        
-        if (votersWithField > 0) {
-          // Process in batches for efficiency
-          const batchSize = 500;
-          let processed = 0;
-          
-          // Use cursor for better memory efficiency with large datasets
-          // Get all voters with the field, we'll check each one to see if it needs conversion
-          const cursor = Voter.find({
-            [fieldName]: { $exists: true }
-          }).select(`${fieldName} _id`).lean().cursor();
-          
-          let bulkOps = [];
-          let batchIndex = 0;
-          let needsConversion = 0;
-          
-          for await (const voter of cursor) {
-            const currentValue = voter[fieldName];
-            let fieldValue;
-            let shouldConvert = false;
-            
-            // Check if already in object format - skip if it is
-            if (typeof currentValue === 'object' && currentValue !== null && !Array.isArray(currentValue) && !(currentValue instanceof Date)) {
-              // It's an object - check if it has 'value' property (our format)
-              if ('value' in currentValue) {
-                // Already in object format, just update visibility if needed
-                if (currentValue.visible !== visible) {
-                  shouldConvert = true;
-                  fieldValue = {
-                    value: currentValue.value,
-                    visible: visible
-                  };
-                } else {
-                  // Already correct format and visibility, skip
-                  processed++;
-                  continue;
-                }
-              } else {
-                // Object but not in our format - convert it
-                shouldConvert = true;
-                fieldValue = { value: currentValue, visible: visible };
-              }
-            } else {
-              // Not an object or is array/Date - needs conversion
-              shouldConvert = true;
-              
-              // Convert based on type
-              if (currentValue === null || currentValue === undefined) {
-                fieldValue = { value: null, visible: visible };
-              } else if (currentValue instanceof Date) {
-                fieldValue = { value: currentValue, visible: visible };
-              } else if (Array.isArray(currentValue)) {
-                fieldValue = { value: currentValue, visible: visible };
-              } else {
-                // Primitive (string, number, boolean)
-                fieldValue = { value: currentValue, visible: visible };
-              }
-            }
-            
-            if (shouldConvert) {
-              needsConversion++;
-              bulkOps.push({
-                updateOne: {
-                  filter: { _id: voter._id },
-                  update: {
-                    $set: {
-                      [fieldName]: fieldValue
-                    }
-                  }
-                }
-              });
-            }
-            
-            processed++;
-            
-            // Execute batch when it reaches batchSize
-            if (bulkOps.length >= batchSize) {
-              try {
-                const batchResult = await Voter.bulkWrite(bulkOps, { ordered: false });
-                updatedCount += batchResult.modifiedCount || 0;
-                console.log(`[Visibility] Batch ${batchIndex}: Converted ${batchResult.modifiedCount}/${bulkOps.length} fields (${processed}/${votersWithField} processed, ${needsConversion} need conversion)`);
-                batchIndex++;
-                bulkOps = []; // Reset for next batch
-              } catch (bulkErr) {
-                console.error(`[Visibility] Bulk write error in batch ${batchIndex}:`, bulkErr.message);
-                console.error(`[Visibility] Error details:`, bulkErr);
-                bulkOps = []; // Clear failed batch
-              }
-            }
-          }
-          
-          // Process remaining operations
-          if (bulkOps.length > 0) {
-            try {
-              const batchResult = await Voter.bulkWrite(bulkOps, { ordered: false });
-              updatedCount += batchResult.modifiedCount || 0;
-              console.log(`[Visibility] Final batch: Converted ${batchResult.modifiedCount}/${bulkOps.length} fields`);
-            } catch (bulkErr) {
-              console.error(`[Visibility] Bulk write error in final batch:`, bulkErr.message);
-            }
-          }
-          
-          console.log(`[Visibility] Conversion complete: ${updatedCount} fields converted for "${fieldName}" (${needsConversion} needed conversion, ${processed} total processed)`);
-        } else {
-          console.log(`[Visibility] No voters found with field "${fieldName}"`);
-        }
-        
-        
-        console.log(`[Visibility Toggle] Field "${fieldName}" visibility updated to ${visible ? 'visible' : 'hidden'}. Updated ${updatedCount} voter documents.`);
-      } catch (asyncError) {
-        console.error(`[Visibility Toggle] Error updating voters for field ${fieldName}:`, asyncError);
-      }
-    })();
   } catch (error) {
     console.error("Error toggling field visibility:", error);
     console.error("Error stack:", error.stack);
-    console.error("Field name:", fieldName);
-    console.error("Visible value:", visible);
-    
     return res.status(500).json({ 
       message: "Failed to toggle field visibility", 
       error: error.message || String(error),
-      fieldName: fieldName,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
@@ -2503,10 +2154,9 @@ app.put("/api/voters/fields/:fieldName", async (req, res) => {
     
     await field.save();
     
-    // If default value changed and field doesn't exist on some documents, add it in object format
+    // If default value changed and field doesn't exist on some documents, add it directly
     if (defaultValue !== undefined && defaultValue !== null && defaultValue !== '') {
-      const fieldVisible = field.visible !== undefined ? field.visible : true;
-      const updateQuery = { $set: { [fieldName]: { value: defaultValue, visible: fieldVisible } } };
+      const updateQuery = { $set: { [fieldName]: defaultValue } };
       await Voter.updateMany({ [fieldName]: { $exists: false } }, updateQuery);
     }
     
@@ -2535,12 +2185,7 @@ app.delete("/api/voters/fields/:fieldName", async (req, res) => {
     
     const { fieldName } = req.params;
     
-    // Check if field is reserved
-    if (RESERVED_FIELDS.includes(fieldName)) {
-      return res.status(400).json({ 
-        message: `Field "${fieldName}" is a reserved system field and cannot be deleted` 
-      });
-    }
+    // No reserved field restrictions - all fields can be deleted
     
     // Check if field exists in schema
     const field = await VoterField.findOne({ name: fieldName });

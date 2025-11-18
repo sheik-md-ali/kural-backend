@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Plus, Search, Edit2, Trash2, Users, UserPlus, UserCog } from "lucide-react";
+import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { CONSTITUENCIES } from "@/constants/constituencies";
 
 interface User {
   _id: string;
@@ -78,6 +81,7 @@ interface UserFormData {
 const UserManagement: React.FC = () => {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [booths, setBooths] = useState<Booth[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,12 +91,17 @@ const UserManagement: React.FC = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  
+  // Get create role from URL params
+  const createRole = searchParams.get('create');
+  const initialRole = createRole === 'L1' || createRole === 'L2' ? createRole : "BoothAgent";
+  
   const [formData, setFormData] = useState<UserFormData>({
     name: "",
     email: "",
     phone: "",
     password: "",
-    role: "BoothAgent",
+    role: initialRole,
     assignedAC: currentUser?.assignedAC?.toString() || "",
     aci_name: currentUser?.aciName || "",
     assignedBoothId: "",
@@ -103,6 +112,20 @@ const UserManagement: React.FC = () => {
     fetchUsers();
     fetchBooths();
   }, [roleFilter, statusFilter]);
+
+  // Handle URL parameter to auto-open dialog with pre-selected role
+  useEffect(() => {
+    const createRole = searchParams.get('create');
+    if (createRole && (createRole === 'L1' || createRole === 'L2') && currentUser?.role === 'L0') {
+      setFormData(prev => ({
+        ...prev,
+        role: createRole,
+      }));
+      setIsDialogOpen(true);
+      // Clear the URL parameter
+      setSearchParams({});
+    }
+  }, [searchParams, currentUser, setSearchParams]);
 
   const fetchBooths = async () => {
     try {
@@ -284,7 +307,8 @@ const UserManagement: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <DashboardLayout>
+      <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
@@ -332,7 +356,12 @@ const UserManagement: React.FC = () => {
                     <Select
                       value={formData.role}
                       onValueChange={(value) =>
-                        setFormData({ ...formData, role: value })
+                        setFormData((prev) => ({
+                          ...prev,
+                          role: value,
+                          assignedAC: value === "L2" ? prev.assignedAC : "",
+                          aci_name: value === "L2" ? prev.aci_name : "",
+                        }))
                       }
                     >
                       <SelectTrigger>
@@ -383,33 +412,33 @@ const UserManagement: React.FC = () => {
                   </div>
                 </div>
 
-                {(formData.role === "L1" || formData.role === "L2") && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="assignedAC">Assigned AC *</Label>
-                      <Input
-                        id="assignedAC"
-                        type="number"
-                        value={formData.assignedAC}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            assignedAC: e.target.value,
-                          })
-                        }
-                        required={formData.role === "L1" || formData.role === "L2"}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="aci_name">AC Name</Label>
-                      <Input
-                        id="aci_name"
-                        value={formData.aci_name}
-                        onChange={(e) =>
-                          setFormData({ ...formData, aci_name: e.target.value })
-                        }
-                      />
-                    </div>
+                {formData.role === "L2" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="assignedAC">Assigned AC *</Label>
+                    <Select
+                      value={formData.assignedAC}
+                      onValueChange={(value) => {
+                        const selected = CONSTITUENCIES.find(
+                          (ac) => ac.number.toString() === value
+                        );
+                        setFormData((prev) => ({
+                          ...prev,
+                          assignedAC: value,
+                          aci_name: selected?.name || "",
+                        }));
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select constituency" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CONSTITUENCIES.map((ac) => (
+                          <SelectItem key={ac.number} value={ac.number.toString()}>
+                            {ac.number} - {ac.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
 
@@ -500,7 +529,7 @@ const UserManagement: React.FC = () => {
         </Dialog>
       </div>
 
-      <Card>
+        <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>Users List</CardTitle>
@@ -629,6 +658,7 @@ const UserManagement: React.FC = () => {
         </CardContent>
       </Card>
     </div>
+    </DashboardLayout>
   );
 };
 

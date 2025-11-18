@@ -86,6 +86,23 @@ export const L0Dashboard = () => {
             </h1>
             <p className="text-muted-foreground">High-level overview across all 26 Assembly Constituencies</p>
           </div>
+          <div className="flex gap-3">
+            <Button 
+              onClick={() => navigate('/l0/users?create=L1')}
+              className="gap-2"
+            >
+              <UserCircle className="h-4 w-4" />
+              Create L1 User
+            </Button>
+            <Button 
+              onClick={() => navigate('/l0/users?create=L2')}
+              variant="outline"
+              className="gap-2"
+            >
+              <UserCircle className="h-4 w-4" />
+              Create L2 User
+            </Button>
+          </div>
         </div>
 
         {/* Smart Filters */}

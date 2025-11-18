@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path, // Keep the path as is
+        // Cookies are automatically forwarded by Vite proxy
       },
     },
   },
