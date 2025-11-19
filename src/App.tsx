@@ -35,6 +35,7 @@ import { SurveyBank } from "@/pages/l0/SurveyBank";
 import { SurveyResponses } from "@/pages/l0/SurveyResponses";
 import { FormBuilder } from "@/pages/l0/FormBuilder";
 import { MasterData } from "@/pages/l0/MasterData";
+import { MobileAppQuestions } from "@/pages/l0/MobileAppQuestions";
 import { SurveyForms } from "@/pages/l1/SurveyForms";
 import { L2Dashboard } from "@/pages/l2/Dashboard";
 import { VoterManager } from "@/pages/l2/VoterManager";
@@ -113,6 +114,7 @@ const AppRoutes = () => {
       <Route path="/l0/surveys" element={<ProtectedRoute allowedRoles={['L0']}><SurveyBank /></ProtectedRoute>} />
       <Route path="/l0/survey-responses" element={<ProtectedRoute allowedRoles={['L0']}><SurveyResponses /></ProtectedRoute>} />
       <Route path="/l0/master-data" element={<ProtectedRoute allowedRoles={['L0']}><MasterData /></ProtectedRoute>} />
+      <Route path="/l0/mobile-app-questions" element={<ProtectedRoute allowedRoles={['L0']}><MobileAppQuestions /></ProtectedRoute>} />
       <Route path="/l0/surveys/builder/:formId" element={<ProtectedRoute allowedRoles={['L0']}><FormBuilder /></ProtectedRoute>} />
       <Route path="/l0/surveys/preview/:formId" element={<ProtectedRoute allowedRoles={['L0']}><FormPreview /></ProtectedRoute>} />
       <Route path="/l0/activity-logs" element={<ProtectedRoute allowedRoles={['L0']}><L0ActivityLogs /></ProtectedRoute>} />

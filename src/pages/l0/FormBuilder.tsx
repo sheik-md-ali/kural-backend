@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, GripVertical, Save, Link2, Download } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Save, Link2, Download, ArrowRight, Search } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -92,19 +92,33 @@ export const FormBuilder = () => {
   const [masterQuestions, setMasterQuestions] = useState<MasterQuestion[]>([]);
   const [loadingMasterQuestions, setLoadingMasterQuestions] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importStep, setImportStep] = useState<'search' | 'customize'>('search');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedMasterQuestion, setSelectedMasterQuestion] = useState<MasterQuestion | null>(null);
+  const [customQuestion, setCustomQuestion] = useState({
+    text: '',
+    options: [] as string[],
+    required: false,
+  });
 
   useEffect(() => {
     const loadMasterQuestions = async () => {
       try {
         setLoadingMasterQuestions(true);
         const sections = await fetchMasterSections();
-        const defaultSection = sections.find((s) => s.name === "Default Master Questions") || sections[0];
-        if (defaultSection) {
-          const questions = defaultSection.questions
-            .filter((q) => q.type === "multiple-choice" && q.isVisible)
+
+        // Gather all questions from all sections that have options
+        const optionBasedTypes = ['multiple-choice', 'checkboxes', 'dropdown', 'rating'];
+        const allQuestions: MasterQuestion[] = [];
+
+        sections.forEach((section) => {
+          const questions = section.questions
+            .filter((q) => optionBasedTypes.includes(q.type) && q.isVisible && q.options.length > 0)
             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-          setMasterQuestions(questions);
-        }
+          allQuestions.push(...questions);
+        });
+
+        setMasterQuestions(allQuestions);
       } catch (error) {
         console.error('Failed to load master questions', error);
       } finally {
@@ -174,23 +188,40 @@ export const FormBuilder = () => {
     });
   };
 
-  const importMasterQuestion = (masterQuestion: MasterQuestion) => {
-    // Create survey options from master question options
-    const surveyOptions = masterQuestion.options.map(opt => opt.label || opt.value);
-    
-    // Auto-map each survey option to its corresponding master option
-    const autoMappings: OptionMapping[] = masterQuestion.options.map((opt, index) => ({
-      surveyOptionIndex: index,
-      masterQuestionId: masterQuestion.id,
-      masterOptionValue: opt.value || opt.label,
-    }));
+  const selectMasterQuestion = (masterQuestion: MasterQuestion) => {
+    setSelectedMasterQuestion(masterQuestion);
+    setCustomQuestion({
+      text: masterQuestion.prompt,
+      options: masterQuestion.options.map(opt => opt.label || opt.value),
+      required: masterQuestion.isRequired || false,
+    });
+    setImportStep('customize');
+  };
+
+  const finalizeImport = () => {
+    if (!selectedMasterQuestion) return;
+
+    // Auto-map each customized survey option to the original master option
+    // Only create mappings for options that have corresponding master options
+    const autoMappings: OptionMapping[] = customQuestion.options
+      .map((_, index) => {
+        const masterOption = selectedMasterQuestion.options[index];
+        if (!masterOption) return null; // Skip if no corresponding master option
+
+        return {
+          surveyOptionIndex: index,
+          masterQuestionId: selectedMasterQuestion.id,
+          masterOptionValue: masterOption.value || masterOption.label || '',
+        };
+      })
+      .filter((mapping): mapping is OptionMapping => mapping !== null);
 
     const importedQuestion: Question = {
       id: Date.now().toString(),
-      text: masterQuestion.prompt,
+      text: customQuestion.text,
       type: 'multiple-choice',
-      required: masterQuestion.isRequired || false,
-      options: surveyOptions,
+      required: customQuestion.required,
+      options: customQuestion.options,
       optionMappings: autoMappings,
     };
 
@@ -199,11 +230,25 @@ export const FormBuilder = () => {
       questions: [...formData.questions, importedQuestion],
     });
 
+    // Reset import dialog state
     setImportDialogOpen(false);
+    setImportStep('search');
+    setSearchQuery('');
+    setSelectedMasterQuestion(null);
+    setCustomQuestion({ text: '', options: [], required: false });
+
     toast({
       title: 'Question imported',
-      description: `"${masterQuestion.prompt}" has been imported with auto-mapped options.`,
+      description: `"${customQuestion.text}" has been added to your survey.`,
     });
+  };
+
+  const closeImportDialog = () => {
+    setImportDialogOpen(false);
+    setImportStep('search');
+    setSearchQuery('');
+    setSelectedMasterQuestion(null);
+    setCustomQuestion({ text: '', options: [], required: false });
   };
 
   const updateQuestion = (id: string, updates: Partial<Question>) => {
@@ -499,155 +544,65 @@ export const FormBuilder = () => {
 
         {/* Questions */}
         <div className="space-y-4">
-          {formData.questions.map((question, index) => (
-            <Card key={question.id} className="p-6 space-y-4">
-              <div className="flex items-start gap-3">
-                <div className="mt-3 cursor-move">
-                  <GripVertical className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div className="flex-1 space-y-4">
-                  <div className="space-y-2">
-                    <Label>Question {index + 1}</Label>
-                    <Input
-                      placeholder="Enter your question"
-                      value={question.text}
-                      onChange={(e) => updateQuestion(question.id, { text: e.target.value })}
-                    />
+          {formData.questions.map((question, index) => {
+            // Check if this question is mapped to master data
+            const hasMasterDataMapping = question.optionMappings && question.optionMappings.length > 0;
+            const masterQuestionId = hasMasterDataMapping ? question.optionMappings[0].masterQuestionId : null;
+            const mappedMasterQuestion = masterQuestionId
+              ? masterQuestions.find(q => q.id === masterQuestionId)
+              : null;
+
+            return (
+              <Card key={question.id} className="p-6 space-y-4 relative">
+                {/* Master Data Badge */}
+                {hasMasterDataMapping && (
+                  <Badge
+                    variant="secondary"
+                    className="absolute top-4 right-4 bg-primary/10 text-primary border-primary/20"
+                  >
+                    Master Data
+                  </Badge>
+                )}
+
+                <div className="flex items-start gap-3">
+                  <div className="mt-3 cursor-move">
+                    <GripVertical className="h-5 w-5 text-muted-foreground" />
                   </div>
+                  <div className="flex-1 space-y-4">
+                    <div className="space-y-2">
+                      <Label>Question {index + 1}</Label>
+                      <Input
+                        placeholder="Enter your question"
+                        value={question.text}
+                        onChange={(e) => updateQuestion(question.id, { text: e.target.value })}
+                      />
+                    </div>
 
                   {/* Options for Multiple Choice */}
                   <div className="space-y-3 pl-4 border-l-2 border-muted">
                     <Label className="text-sm text-muted-foreground">Answer Options</Label>
                     {question.options?.map((option, optionIndex) => {
                       const optionLabel = String.fromCharCode(65 + optionIndex); // A, B, C, etc.
-                      const currentMapping = question.optionMappings?.find(
-                        m => m.surveyOptionIndex === optionIndex
-                      );
-                      const mappedMasterQuestion = currentMapping
-                        ? masterQuestions.find(q => q.id === currentMapping.masterQuestionId)
-                        : null;
-                      
+
                       return (
-                        <div key={optionIndex} className="space-y-2 p-3 border rounded-md">
-                          <div className="flex gap-2">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-xs font-medium text-muted-foreground">
-                                  Option {optionLabel}:
-                                </span>
-                              </div>
-                              <Input
-                                placeholder={`Option ${optionIndex + 1}`}
-                                value={option}
-                                onChange={(e) => updateOption(question.id, optionIndex, e.target.value)}
-                              />
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => deleteOption(question.id, optionIndex)}
-                              disabled={question.options && question.options.length <= 1}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          
-                          {/* Option Mapping to Master Question */}
-                          <div className="space-y-2 mt-2 pt-2 border-t">
-                            <div className="flex items-center gap-2">
-                              <Link2 className="h-3 w-3 text-muted-foreground" />
-                              <Label className="text-xs text-muted-foreground">
-                                Map to Master Question Option:
-                              </Label>
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex gap-2">
-                                <Select
-                                  value={currentMapping?.masterQuestionId || undefined}
-                                  onValueChange={(masterQuestionId) => {
-                                    const masterQ = masterQuestions.find(q => q.id === masterQuestionId);
-                                    if (masterQ && masterQ.options.length > 0) {
-                                      // Auto-select first option
-                                      updateOptionMapping(
-                                        question.id,
-                                        optionIndex,
-                                        masterQuestionId,
-                                        masterQ.options[0].value || masterQ.options[0].label
-                                      );
-                                    } else {
-                                      updateOptionMapping(question.id, optionIndex, masterQuestionId, null);
-                                    }
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs flex-1">
-                                    <SelectValue placeholder="Select master question" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {masterQuestions.map((mq) => (
-                                      <SelectItem key={mq.id} value={mq.id}>
-                                        {mq.prompt}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                {currentMapping && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 px-2"
-                                    onClick={() => updateOptionMapping(question.id, optionIndex, null, null)}
-                                    title="Clear mapping"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
-                                )}
-                              </div>
-                              
-                              {currentMapping && mappedMasterQuestion && (
-                                <Select
-                                  value={currentMapping.masterOptionValue || undefined}
-                                  onValueChange={(masterOptionValue) => {
-                                    updateOptionMapping(
-                                      question.id,
-                                      optionIndex,
-                                      currentMapping.masterQuestionId,
-                                      masterOptionValue
-                                    );
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs w-full">
-                                    <SelectValue placeholder="Select option" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {mappedMasterQuestion.options.map((opt, optIdx) => {
-                                      const optLabel = String.fromCharCode(65 + optIdx);
-                                      const optValue = opt.value || opt.label;
-                                      // Ensure value is not empty string
-                                      if (!optValue) return null;
-                                      return (
-                                        <SelectItem key={opt.id || optValue || optIdx} value={optValue}>
-                                          Option {optLabel}: {opt.label || opt.value}
-                                        </SelectItem>
-                                      );
-                                    })}
-                                  </SelectContent>
-                                </Select>
-                              )}
-                            </div>
-                            {currentMapping && mappedMasterQuestion && (
-                              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Link2 className="h-3 w-3" />
-                                <span>
-                                  Mapped to: {mappedMasterQuestion.prompt} → {
-                                    mappedMasterQuestion.options.find(
-                                      opt => (opt.value || opt.label) === currentMapping.masterOptionValue
-                                    )?.label || currentMapping.masterOptionValue
-                                  }
-                                </span>
-                              </div>
-                            )}
-                          </div>
+                        <div key={optionIndex} className="flex gap-2 items-center">
+                          <span className="text-xs font-medium text-muted-foreground w-16">
+                            Option {optionLabel}:
+                          </span>
+                          <Input
+                            placeholder={`Option ${optionIndex + 1}`}
+                            value={option}
+                            onChange={(e) => updateOption(question.id, optionIndex, e.target.value)}
+                            className="flex-1"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteOption(question.id, optionIndex)}
+                            disabled={question.options && question.options.length <= 1}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       );
                     })}
@@ -660,6 +615,38 @@ export const FormBuilder = () => {
                       Add Option
                     </Button>
                   </div>
+
+                  {/* Master Question Reference */}
+                  {mappedMasterQuestion && (
+                    <div className="mt-4 p-4 bg-muted/30 rounded-md border border-primary/20">
+                      <div className="flex items-start gap-2">
+                        <Link2 className="h-4 w-4 text-primary mt-0.5" />
+                        <div className="flex-1">
+                          <p className="text-xs font-semibold text-primary mb-1">
+                            Mapped to Master Question:
+                          </p>
+                          <p className="text-sm font-medium mb-2">{mappedMasterQuestion.prompt}</p>
+                          <div className="flex flex-wrap gap-2">
+                            {question.optionMappings?.map((mapping, idx) => {
+                              const masterOption = mappedMasterQuestion.options.find(
+                                opt => (opt.value || opt.label) === mapping.masterOptionValue
+                              );
+                              const surveyOptionLabel = String.fromCharCode(65 + mapping.surveyOptionIndex);
+                              const masterOptionLabel = String.fromCharCode(65 + mappedMasterQuestion.options.findIndex(
+                                opt => (opt.value || opt.label) === mapping.masterOptionValue
+                              ));
+
+                              return masterOption ? (
+                                <Badge key={idx} variant="outline" className="text-xs">
+                                  {surveyOptionLabel} → {masterOptionLabel}: {masterOption.label || masterOption.value}
+                                </Badge>
+                              ) : null;
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between pt-2 border-t">
                     <div className="flex items-center space-x-2">
@@ -683,7 +670,8 @@ export const FormBuilder = () => {
                 </div>
               </div>
             </Card>
-          ))}
+          );
+          })}
         </div>
 
         {/* Add Question Buttons */}
@@ -708,91 +696,272 @@ export const FormBuilder = () => {
         </div>
       </div>
 
-      {/* Import Master Question Dialog */}
-      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
+      {/* Import from Master Data Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={closeImportDialog}>
+        <DialogContent className={importStep === 'search' ? 'max-w-2xl max-h-[80vh]' : 'max-w-6xl max-h-[90vh]'}>
           <DialogHeader>
-            <DialogTitle>Import Question from Master Data</DialogTitle>
+            <DialogTitle>
+              {importStep === 'search' ? 'Import Question from Master Data' : 'Customize & Map Question'}
+            </DialogTitle>
             <DialogDescription>
-              Select a master question to import. The question and options will be pre-filled, and mappings will be automatically configured.
+              {importStep === 'search'
+                ? 'Search and select a master question to import into your survey.'
+                : 'Edit the question and answers for your survey. They will be mapped to the master data options.'}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-            {loadingMasterQuestions ? (
-              <div className="flex items-center justify-center py-8">
-                <p className="text-muted-foreground">Loading master questions...</p>
-              </div>
-            ) : masterQuestions.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-muted-foreground">No master questions available.</p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  Create master questions in the Master Data page first.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {masterQuestions.map((masterQ) => (
-                  <Card
-                    key={masterQ.id}
-                    className="cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => importMasterQuestion(masterQ)}
-                  >
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <CardTitle className="text-base font-semibold mb-2">
-                            {masterQ.prompt}
-                          </CardTitle>
-                          {masterQ.helperText && (
-                            <p className="text-sm text-muted-foreground mb-2">
-                              {masterQ.helperText}
-                            </p>
-                          )}
-                          <div className="flex items-center gap-2 mb-2">
-                            {masterQ.isRequired && (
-                              <Badge variant="secondary" className="text-xs">
-                                Required
-                              </Badge>
-                            )}
-                            <Badge variant="outline" className="text-xs">
-                              {masterQ.options.length} option(s)
-                            </Badge>
+
+          {/* SEARCH PHASE */}
+          {importStep === 'search' && (
+            <div className="space-y-4">
+              {/* Search Box with Dropdown */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground z-10" />
+                <Input
+                  placeholder="Type at least 3 characters to search questions..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+
+                {/* Dropdown Suggestions */}
+                {searchQuery.trim().length >= 3 && (() => {
+                  const filteredQuestions = masterQuestions.filter((q) =>
+                    q.prompt.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    q.options.some(opt => (opt.label || opt.value).toLowerCase().includes(searchQuery.toLowerCase()))
+                  );
+
+                  return filteredQuestions.length > 0 ? (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg max-h-[400px] overflow-y-auto z-20">
+                      <div className="p-2 border-b bg-muted/30">
+                        <p className="text-xs text-muted-foreground">
+                          Found {filteredQuestions.length} question{filteredQuestions.length !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      {filteredQuestions.map((masterQ) => (
+                        <div
+                          key={masterQ.id}
+                          className="p-3 hover:bg-muted/50 cursor-pointer border-b last:border-b-0 transition-colors"
+                          onClick={() => selectMasterQuestion(masterQ)}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{masterQ.prompt}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <Badge variant="outline" className="text-xs">
+                                  {masterQ.type.replace('-', ' ')}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {masterQ.options.length} option{masterQ.options.length !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            importMasterQuestion(masterQ);
-                          }}
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
+                      ))}
+                    </div>
+                  ) : searchQuery.trim().length >= 3 ? (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg z-20">
+                      <div className="p-4 text-center">
+                        <p className="text-sm text-muted-foreground">No questions found matching "{searchQuery}"</p>
+                        <p className="text-xs text-muted-foreground mt-1">Try a different search term</p>
                       </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-1">
-                        <p className="text-xs font-medium text-muted-foreground mb-2">
-                          Options:
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {masterQ.options.map((opt, idx) => {
-                            const optionLabel = String.fromCharCode(65 + idx);
-                            return (
-                              <Badge key={opt.id || opt.value || idx} variant="outline" className="text-xs">
-                                {optionLabel}: {opt.label || opt.value}
-                              </Badge>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                    </div>
+                  ) : null;
+                })()}
               </div>
-            )}
-          </div>
+
+              {/* Empty State */}
+              {loadingMasterQuestions ? (
+                <div className="flex items-center justify-center py-12">
+                  <p className="text-muted-foreground">Loading master questions...</p>
+                </div>
+              ) : masterQuestions.length === 0 ? (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">No master questions available.</p>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Create master questions in the Master Data page first.
+                  </p>
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <Search className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+                  <p className="text-muted-foreground font-medium">Type at least 3 characters to search</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Search by question text or answer options
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* CUSTOMIZE PHASE */}
+          {importStep === 'customize' && selectedMasterQuestion && (
+            <div className="space-y-4">
+              {/* Split View: Original (Left) and Custom (Right) */}
+              <div className="grid grid-cols-2 gap-6 max-h-[70vh] overflow-y-auto">
+                {/* LEFT: Original Master Data (Read-only) */}
+                <div className="space-y-4 border-r pr-6">
+                  <div className="sticky top-0 bg-background pb-2">
+                    <h3 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">
+                      Master Data (Original)
+                    </h3>
+                  </div>
+
+                  {/* Original Question */}
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Question</Label>
+                    <div className="p-3 bg-muted/30 rounded-md border">
+                      <p className="text-sm">{selectedMasterQuestion.prompt}</p>
+                    </div>
+                  </div>
+
+                  {/* Original Options */}
+                  <div className="space-y-3">
+                    <Label className="text-xs text-muted-foreground">Answer Options</Label>
+                    {selectedMasterQuestion.options.map((opt, index) => {
+                      const optionLabel = String.fromCharCode(65 + index);
+                      return (
+                        <div key={opt.id || index} className="flex items-center gap-3">
+                          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                            <span className="text-xs font-semibold text-primary">{optionLabel}</span>
+                          </div>
+                          <div className="flex-1 p-3 bg-muted/30 rounded-md border">
+                            <p className="text-sm">{opt.label || opt.value}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* RIGHT: Customizable Survey Version */}
+                <div className="space-y-4 pl-6">
+                  <div className="sticky top-0 bg-background pb-2">
+                    <h3 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">
+                      Your Survey (Editable)
+                    </h3>
+                  </div>
+
+                  {/* Custom Question */}
+                  <div className="space-y-2">
+                    <Label htmlFor="custom-question" className="text-xs text-muted-foreground">
+                      Question Text
+                    </Label>
+                    <Textarea
+                      id="custom-question"
+                      value={customQuestion.text}
+                      onChange={(e) => setCustomQuestion({ ...customQuestion, text: e.target.value })}
+                      placeholder="Enter your survey question"
+                      className="min-h-[80px]"
+                    />
+                  </div>
+
+                  {/* Custom Options with Mapping Indicators */}
+                  <div className="space-y-3">
+                    <Label className="text-xs text-muted-foreground">Answer Options</Label>
+                    {customQuestion.options.map((option, index) => {
+                      const optionLabel = String.fromCharCode(65 + index);
+                      const hasMasterOption = selectedMasterQuestion.options[index];
+
+                      return (
+                        <div key={index} className="flex items-center gap-3">
+                          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary flex items-center justify-center">
+                            <span className="text-xs font-semibold text-primary-foreground">{optionLabel}</span>
+                          </div>
+                          <div className="flex-1 flex gap-2 items-center">
+                            <Input
+                              value={option}
+                              onChange={(e) => {
+                                const newOptions = [...customQuestion.options];
+                                newOptions[index] = e.target.value;
+                                setCustomQuestion({ ...customQuestion, options: newOptions });
+                              }}
+                              placeholder={`Option ${optionLabel}`}
+                              className={hasMasterOption ? 'border-primary/50' : ''}
+                            />
+                            {customQuestion.options.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  const newOptions = customQuestion.options.filter((_, i) => i !== index);
+                                  setCustomQuestion({ ...customQuestion, options: newOptions });
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                          {hasMasterOption && (
+                            <div className="flex-shrink-0">
+                              <ArrowRight className="h-4 w-4 text-primary" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setCustomQuestion({
+                          ...customQuestion,
+                          options: [...customQuestion.options, ''],
+                        });
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Option
+                    </Button>
+                    {customQuestion.options.length > selectedMasterQuestion.options.length && (
+                      <p className="text-xs text-amber-600">
+                        Extra options (beyond master data) won't be mapped to master categories.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Required Toggle */}
+                  <div className="flex items-center justify-between rounded-md border p-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-sm">Required</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Mark this question as mandatory
+                      </p>
+                    </div>
+                    <Switch
+                      checked={customQuestion.required}
+                      onCheckedChange={(checked) =>
+                        setCustomQuestion({ ...customQuestion, required: checked })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-between items-center pt-4 border-t">
+                <Button
+                  variant="ghost"
+                  onClick={() => setImportStep('search')}
+                >
+                  ← Back to Search
+                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={closeImportDialog}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={finalizeImport}
+                    disabled={!customQuestion.text.trim() || customQuestion.options.filter(o => o.trim()).length === 0}
+                  >
+                    Import Question
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </DashboardLayout>

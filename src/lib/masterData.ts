@@ -1,6 +1,16 @@
 import { api } from "./api";
 
-export type MasterQuestionType = "short-answer" | "multiple-choice";
+export type MasterQuestionType =
+  | "short-answer"
+  | "long-answer"
+  | "multiple-choice"
+  | "checkboxes"
+  | "dropdown"
+  | "number"
+  | "date"
+  | "email"
+  | "phone"
+  | "rating";
 
 export interface MasterAnswerOption {
   id?: string;

@@ -36,7 +36,18 @@ const questionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["short-answer", "multiple-choice"],
+      enum: [
+        "short-answer",
+        "long-answer",
+        "multiple-choice",
+        "checkboxes",
+        "dropdown",
+        "number",
+        "date",
+        "email",
+        "phone",
+        "rating",
+      ],
       required: true,
       default: "short-answer",
     },
@@ -62,12 +73,14 @@ const questionSchema = new mongoose.Schema(
       default: [],
       validate: {
         validator(options) {
-          if (this.type === "multiple-choice") {
+          // Types that require options
+          const optionRequiredTypes = ["multiple-choice", "checkboxes", "dropdown", "rating"];
+          if (optionRequiredTypes.includes(this.type)) {
             return Array.isArray(options) && options.length > 0;
           }
           return true;
         },
-        message: "Multiple choice questions must have at least one answer option",
+        message: "This question type must have at least one answer option",
       },
     },
   },

@@ -437,7 +437,26 @@ function sanitizeCreatedByRole(createdByRole) {
   return trimmed || undefined;
 }
 
-const MASTER_QUESTION_TYPES = new Set(["short-answer", "multiple-choice"]);
+const MASTER_QUESTION_TYPES = new Set([
+  "short-answer",
+  "long-answer",
+  "multiple-choice",
+  "checkboxes",
+  "dropdown",
+  "number",
+  "date",
+  "email",
+  "phone",
+  "rating",
+]);
+
+// Types that require answer options
+const OPTION_REQUIRED_TYPES = new Set([
+  "multiple-choice",
+  "checkboxes",
+  "dropdown",
+  "rating",
+]);
 
 function sanitizeSectionName(name) {
   if (typeof name !== "string") {
@@ -447,7 +466,8 @@ function sanitizeSectionName(name) {
 }
 
 function normalizeAnswerOptions(questionType, rawOptions) {
-  if (questionType !== "multiple-choice") {
+  // Only process options for types that require them
+  if (!OPTION_REQUIRED_TYPES.has(questionType)) {
     return [];
   }
 
@@ -548,17 +568,16 @@ function normalizeMasterQuestion(question, fallbackOrder = 0) {
       ? question.order
       : fallbackOrder;
 
-  const options =
-    normalizedType === "multiple-choice"
-      ? normalizeAnswerOptions(
-          normalizedType,
-          question.options ?? question.answers ?? [],
-        )
-      : [];
+  const options = OPTION_REQUIRED_TYPES.has(normalizedType)
+    ? normalizeAnswerOptions(
+        normalizedType,
+        question.options ?? question.answers ?? [],
+      )
+    : [];
 
-  if (normalizedType === "multiple-choice" && options.length === 0) {
+  if (OPTION_REQUIRED_TYPES.has(normalizedType) && options.length === 0) {
     throw new Error(
-      "Multiple choice questions must include at least one answer option",
+      "This question type requires at least one answer option",
     );
   }
 
@@ -584,7 +603,7 @@ function formatMasterQuestionResponse(questionDoc) {
       : questionDoc;
 
   const formattedOptions =
-    question.type === "multiple-choice" && Array.isArray(question.options)
+    OPTION_REQUIRED_TYPES.has(question.type) && Array.isArray(question.options)
       ? [...question.options]
           .sort((a, b) => {
             const orderDiff = (a.order ?? 0) - (b.order ?? 0);
