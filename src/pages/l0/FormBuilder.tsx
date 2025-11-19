@@ -606,14 +606,16 @@ export const FormBuilder = () => {
                         </div>
                       );
                     })}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => addOption(question.id)}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Option
-                    </Button>
+                    {!hasMasterDataMapping && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addOption(question.id)}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add Option
+                      </Button>
+                    )}
                   </div>
 
                   {/* Master Question Reference */}
@@ -879,19 +881,6 @@ export const FormBuilder = () => {
                               placeholder={`Option ${optionLabel}`}
                               className={hasMasterOption ? 'border-primary/50' : ''}
                             />
-                            {customQuestion.options.length > 1 && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => {
-                                  const newOptions = customQuestion.options.filter((_, i) => i !== index);
-                                  setCustomQuestion({ ...customQuestion, options: newOptions });
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
                           </div>
                           {hasMasterOption && (
                             <div className="flex-shrink-0">
@@ -901,25 +890,6 @@ export const FormBuilder = () => {
                         </div>
                       );
                     })}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setCustomQuestion({
-                          ...customQuestion,
-                          options: [...customQuestion.options, ''],
-                        });
-                      }}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Option
-                    </Button>
-                    {customQuestion.options.length > selectedMasterQuestion.options.length && (
-                      <p className="text-xs text-amber-600">
-                        Extra options (beyond master data) won't be mapped to master categories.
-                      </p>
-                    )}
                   </div>
 
                   {/* Required Toggle */}
