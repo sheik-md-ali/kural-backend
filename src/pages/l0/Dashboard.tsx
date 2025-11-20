@@ -38,6 +38,13 @@ interface DashboardStats {
   highestVoterAC: { ac: string; voters: number; completion: number } | null;
   bestCompletionAC: { ac: string; completion: number; surveys: number } | null;
   needsAttentionAC: { ac: string; completion: number; surveys: number } | null;
+  trendSummary: {
+    avgDailyLogins?: number | null;
+    peakHourActivity?: string | null;
+    formsCreatedLast30Days?: number | null;
+    boothsActive?: number | null;
+    boothsTotal?: number | null;
+  } | null;
 }
 
 export const L0Dashboard = () => {
@@ -59,6 +66,7 @@ export const L0Dashboard = () => {
     highestVoterAC: null,
     bestCompletionAC: null,
     needsAttentionAC: null,
+    trendSummary: null,
   });
 
   useEffect(() => {
@@ -108,14 +116,19 @@ export const L0Dashboard = () => {
           )
         : null;
 
-      // Generate system growth data (last 5 months)
-      const systemGrowthData = generateSystemGrowthData(acPerformance);
-
-      // Generate survey distribution (last 5 weeks)
-      const surveyDistribution = generateSurveyDistribution(acPerformance);
-
-      // Generate admin activity data (last 7 days - placeholder for now)
-      const adminActivityData = generateAdminActivityData(totalL1Admins, totalL2Moderators, totalL3Agents);
+      const statsPayload = dashboardStats?.stats ?? dashboardStats ?? {};
+      const systemGrowthData = Array.isArray(statsPayload.systemGrowthData) ? statsPayload.systemGrowthData : [];
+      const surveyDistribution = Array.isArray(statsPayload.surveyDistribution) ? statsPayload.surveyDistribution : [];
+      const adminActivityData = Array.isArray(statsPayload.adminActivityData) ? statsPayload.adminActivityData : [];
+      const trendSummaryData = statsPayload && typeof statsPayload.trendSummary === 'object'
+        ? {
+            avgDailyLogins: statsPayload.trendSummary?.avgDailyLogins ?? null,
+            peakHourActivity: statsPayload.trendSummary?.peakHourActivity ?? null,
+            formsCreatedLast30Days: statsPayload.trendSummary?.formsCreatedLast30Days ?? null,
+            boothsActive: statsPayload.trendSummary?.boothsActive ?? null,
+            boothsTotal: statsPayload.trendSummary?.boothsTotal ?? null,
+          }
+        : null;
 
       setStats({
         totalL1Admins,
@@ -141,6 +154,7 @@ export const L0Dashboard = () => {
           completion: needsAttentionAC.completion,
           surveys: Math.round((needsAttentionAC.voters * needsAttentionAC.completion) / 100),
         } : null,
+        trendSummary: trendSummaryData,
       });
     } catch (error: any) {
       console.error('Error fetching dashboard data:', error);
@@ -154,62 +168,13 @@ export const L0Dashboard = () => {
     }
   };
 
-  // Helper function to generate system growth data
-  const generateSystemGrowthData = (acPerformance: ACPerformance[]) => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May'];
-    const currentMonth = new Date().getMonth();
-    const monthIndex = Math.max(0, currentMonth - 4);
-    
-    const totalVoters = acPerformance.reduce((sum, ac) => sum + ac.voters, 0);
-    const totalAgents = acPerformance.reduce((sum, ac) => sum + ac.agents, 0);
-    const totalSurveys = acPerformance.reduce((sum, ac) => sum + Math.round((ac.voters * ac.completion) / 100), 0);
-    
-    return months.slice(monthIndex, monthIndex + 5).map((month, index) => {
-      // Estimate growth based on current data (backward projection)
-      const growthFactor = 1 - (index * 0.15); // Decreasing growth over time
-      return {
-        month,
-        voters: Math.max(0, Math.round(totalVoters * growthFactor)),
-        surveys: Math.max(0, Math.round(totalSurveys * growthFactor)),
-        agents: Math.max(0, Math.round(totalAgents * growthFactor)),
-      };
-    });
-  };
-
-  // Helper function to generate survey distribution
-  const generateSurveyDistribution = (acPerformance: ACPerformance[]) => {
-    const totalCompleted = acPerformance.reduce((sum, ac) => sum + Math.round((ac.voters * ac.completion) / 100), 0);
-    const totalPending = acPerformance.reduce((sum, ac) => sum + Math.round(ac.voters * (1 - ac.completion / 100)), 0);
-    
-    const weeks = ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5'];
-    return weeks.map((category, index) => {
-      const weekFactor = (5 - index) / 15; // Decreasing distribution
-      return {
-        category,
-        completed: Math.round(totalCompleted * weekFactor),
-        pending: Math.round(totalPending * weekFactor),
-      };
-    });
-  };
-
-  // Helper function to generate admin activity data
-  const generateAdminActivityData = (baseL1: number, baseL2: number, baseL3: number) => {
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    
-    return days.map((day, index) => {
-      // Simulate activity patterns (weekends lower)
-      const isWeekend = index >= 5;
-      const activityFactor = isWeekend ? 0.6 : 1.0;
-      const variation = 0.85 + (index % 3) * 0.1; // Consistent variation based on day
-      
-      return {
-        day,
-        l1: Math.max(0, Math.round(baseL1 * activityFactor * variation)),
-        l2: Math.max(0, Math.round(baseL2 * activityFactor * variation)),
-        l3: Math.max(0, Math.round(baseL3 * activityFactor * variation)),
-      };
-    });
-  };
+  const hasTrendSummaryData = !!stats.trendSummary && Object.values(stats.trendSummary).some((value) => value !== null && value !== undefined && value !== '');
+  const formatNumberValue = (value?: number | null) =>
+    typeof value === 'number' ? value.toLocaleString() : '—';
+  const hasHighlightInsights =
+    (stats.highestVoterAC && stats.highestVoterAC.voters > 0) ||
+    (stats.bestCompletionAC && stats.bestCompletionAC.completion > 0) ||
+    (stats.needsAttentionAC && stats.needsAttentionAC.completion > 0);
 
   if (loading) {
     return (
@@ -333,115 +298,173 @@ export const L0Dashboard = () => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="p-6">
                 <h3 className="text-lg font-semibold mb-4">System Growth (5 Months)</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={stats.systemGrowthData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="voters" stroke="hsl(var(--primary))" strokeWidth={2} name="Voters" />
-                    <Line type="monotone" dataKey="surveys" stroke="hsl(var(--success))" strokeWidth={2} name="Surveys" />
-                  </LineChart>
-                </ResponsiveContainer>
+                {stats.systemGrowthData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={stats.systemGrowthData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="voters" stroke="hsl(var(--primary))" strokeWidth={2} name="Voters" />
+                      <Line type="monotone" dataKey="surveys" stroke="hsl(var(--success))" strokeWidth={2} name="Surveys" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
+                    No valid data available.
+                  </div>
+                )}
               </Card>
 
               <Card className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Survey Distribution (Weekly)</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={stats.surveyDistribution}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="category" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="completed" fill="hsl(var(--success))" name="Completed" />
-                    <Bar dataKey="pending" fill="hsl(var(--warning))" name="Pending" />
-                  </BarChart>
-                </ResponsiveContainer>
+                {stats.surveyDistribution.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={stats.surveyDistribution}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="category" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="completed" fill="hsl(var(--success))" name="Completed" />
+                      <Bar dataKey="pending" fill="hsl(var(--warning))" name="Pending" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
+                    No valid data available.
+                  </div>
+                )}
               </Card>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center">
-                  <TrendingUp className="mr-2 h-5 w-5 text-success" />
-                  Highest Voter AC
-                </h3>
-                <div className="space-y-2">
-                  {stats.highestVoterAC ? (
-                    <>
-                      <p className="text-2xl font-bold text-primary">{stats.highestVoterAC.ac}</p>
-                      <p className="text-sm text-muted-foreground">{stats.highestVoterAC.voters.toLocaleString()} voters</p>
-                      <p className="text-sm text-muted-foreground">{stats.highestVoterAC.completion.toFixed(1)}% completion</p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No data available</p>
-                  )}
-                </div>
-              </Card>
+            {hasHighlightInsights ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center">
+                    <TrendingUp className="mr-2 h-5 w-5 text-success" />
+                    Highest Voter AC
+                  </h3>
+                  <div className="space-y-2">
+                    {stats.highestVoterAC && stats.highestVoterAC.voters > 0 ? (
+                      <>
+                        <p className="text-2xl font-bold text-primary">{stats.highestVoterAC.ac}</p>
+                        <p className="text-sm text-muted-foreground">{stats.highestVoterAC.voters.toLocaleString()} voters</p>
+                        <p className="text-sm text-muted-foreground">{stats.highestVoterAC.completion.toFixed(1)}% completion</p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No data available</p>
+                    )}
+                  </div>
+                </Card>
 
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center">
-                  <FileCheck className="mr-2 h-5 w-5 text-success" />
-                  Best Completion Rate
-                </h3>
-                <div className="space-y-2">
-                  {stats.bestCompletionAC ? (
-                    <>
-                      <p className="text-2xl font-bold text-primary">{stats.bestCompletionAC.ac}</p>
-                      <p className="text-sm text-muted-foreground">{stats.bestCompletionAC.completion.toFixed(1)}% completion</p>
-                      <p className="text-sm text-muted-foreground">{stats.bestCompletionAC.surveys.toLocaleString()} surveys</p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No data available</p>
-                  )}
-                </div>
-              </Card>
+                <Card className="p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center">
+                    <FileCheck className="mr-2 h-5 w-5 text-success" />
+                    Best Completion Rate
+                  </h3>
+                  <div className="space-y-2">
+                    {stats.bestCompletionAC && stats.bestCompletionAC.completion > 0 ? (
+                      <>
+                        <p className="text-2xl font-bold text-primary">{stats.bestCompletionAC.ac}</p>
+                        <p className="text-sm text-muted-foreground">{stats.bestCompletionAC.completion.toFixed(1)}% completion</p>
+                        <p className="text-sm text-muted-foreground">{stats.bestCompletionAC.surveys.toLocaleString()} surveys</p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No data available</p>
+                    )}
+                  </div>
+                </Card>
 
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center">
-                  <TrendingDown className="mr-2 h-5 w-5 text-destructive" />
-                  Needs Attention
-                </h3>
-                <div className="space-y-2">
-                  {stats.needsAttentionAC ? (
-                    <>
-                      <p className="text-2xl font-bold text-primary">{stats.needsAttentionAC.ac}</p>
-                      <p className="text-sm text-muted-foreground">{stats.needsAttentionAC.completion.toFixed(1)}% completion</p>
-                      <p className="text-sm text-muted-foreground">{stats.needsAttentionAC.surveys.toLocaleString()} surveys</p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No data available</p>
-                  )}
-                </div>
+                <Card className="p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center">
+                    <TrendingDown className="mr-2 h-5 w-5 text-destructive" />
+                    Needs Attention
+                  </h3>
+                  <div className="space-y-2">
+                    {stats.needsAttentionAC && stats.needsAttentionAC.completion > 0 ? (
+                      <>
+                        <p className="text-2xl font-bold text-primary">{stats.needsAttentionAC.ac}</p>
+                        <p className="text-sm text-muted-foreground">{stats.needsAttentionAC.completion.toFixed(1)}% completion</p>
+                        <p className="text-sm text-muted-foreground">{stats.needsAttentionAC.surveys.toLocaleString()} surveys</p>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No data available</p>
+                    )}
+                  </div>
+                </Card>
+              </div>
+            ) : (
+              <Card className="p-6 text-center text-muted-foreground">
+                No valid data available.
               </Card>
-            </div>
+            )}
           </TabsContent>
 
           <TabsContent value="trends" className="space-y-6">
             <Card className="p-6">
               <h3 className="text-lg font-semibold mb-4">Admin Activity by Level (7 Days)</h3>
-              <ResponsiveContainer width="100%" height={400}>
-                <AreaChart data={stats.adminActivityData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="day" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Area type="monotone" dataKey="l1" stackId="1" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.6} name="L1 Admins" />
-                  <Area type="monotone" dataKey="l2" stackId="1" stroke="hsl(var(--success))" fill="hsl(var(--success))" fillOpacity={0.6} name="L2 Moderators" />
-                  <Area type="monotone" dataKey="l3" stackId="1" stroke="hsl(var(--warning))" fill="hsl(var(--warning))" fillOpacity={0.6} name="L3 Agents" />
-                </AreaChart>
-              </ResponsiveContainer>
+              {stats.adminActivityData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={400}>
+                  <AreaChart data={stats.adminActivityData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="day" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Area type="monotone" dataKey="l1" stackId="1" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.6} name="L1 Admins" />
+                    <Area type="monotone" dataKey="l2" stackId="1" stroke="hsl(var(--success))" fill="hsl(var(--success))" fillOpacity={0.6} name="L2 Moderators" />
+                    <Area type="monotone" dataKey="l3" stackId="1" stroke="hsl(var(--warning))" fill="hsl(var(--warning))" fillOpacity={0.6} name="L3 Agents" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-[400px] items-center justify-center text-sm text-muted-foreground">
+                  No valid data available.
+                </div>
+              )}
             </Card>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <StatCard title="Avg Daily Logins" value="287" icon={Activity} variant="default" subtitle="Across all users" />
-              <StatCard title="Peak Hour Activity" value="2-4 PM" icon={Activity} variant="primary" subtitle="Highest traffic" />
-              <StatCard title="Forms Created" value="37" icon={FileCheck} variant="success" subtitle="Last 30 days" />
-              <StatCard title="Booths Active" value="142" icon={Home} variant="warning" subtitle="Out of 234 total" />
-            </div>
+            {hasTrendSummaryData ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <StatCard
+                  title="Avg Daily Logins"
+                  value={formatNumberValue(stats.trendSummary?.avgDailyLogins)}
+                  icon={Activity}
+                  variant="default"
+                  subtitle="Across all users"
+                />
+                <StatCard
+                  title="Peak Hour Activity"
+                  value={stats.trendSummary?.peakHourActivity || '—'}
+                  icon={Activity}
+                  variant="primary"
+                  subtitle="Highest traffic"
+                />
+                <StatCard
+                  title="Forms Created"
+                  value={formatNumberValue(stats.trendSummary?.formsCreatedLast30Days)}
+                  icon={FileCheck}
+                  variant="success"
+                  subtitle="Last 30 days"
+                />
+                <StatCard
+                  title="Booths Active"
+                  value={formatNumberValue(stats.trendSummary?.boothsActive)}
+                  icon={Home}
+                  variant="warning"
+                  subtitle={
+                    stats.trendSummary?.boothsTotal
+                      ? `Out of ${stats.trendSummary.boothsTotal.toLocaleString()} total`
+                      : 'Booth coverage unavailable'
+                  }
+                />
+              </div>
+            ) : (
+              <Card className="p-6 text-center text-muted-foreground">
+                No valid data available.
+              </Card>
+            )}
           </TabsContent>
 
           <TabsContent value="performance" className="space-y-6">
