@@ -9,7 +9,7 @@ export interface ActivityLog {
   timestamp: Date;
   userId: string;
   userName: string;
-  userRole: 'L0' | 'L1' | 'L2' | 'L9';
+  userRole: 'L0' | 'L1' | 'L2' | 'L9' | 'Booth Agent';
   action: ActivityAction;
   entityType: EntityType;
   entityId?: string;
@@ -36,57 +36,9 @@ interface ActivityLogContextType {
 
 const ActivityLogContext = createContext<ActivityLogContextType | undefined>(undefined);
 
-// Generate mock activity data
-const generateMockActivities = (): ActivityLog[] => {
-  const now = new Date();
-  const activities: ActivityLog[] = [];
-
-  const users = [
-    { id: '1', name: 'Super Admin', role: 'L0' as const },
-    { id: '2', name: 'ACIM Sharma', role: 'L1' as const },
-    { id: '3', name: 'ACI Moderator', role: 'L2' as const },
-  ];
-
-  const actions: { action: ActivityAction; entityType: EntityType; details: string; acNumber?: number }[] = [
-    { action: 'create', entityType: 'voter', details: 'Created new voter Rajesh Kumar', acNumber: 101 },
-    { action: 'update', entityType: 'family', details: 'Updated family details for Singh household', acNumber: 118 },
-    { action: 'create', entityType: 'survey', details: 'Completed survey for Booth 12', acNumber: 119 },
-    { action: 'assign', entityType: 'agent', details: 'Assigned agent to Booth 8', acNumber: 121 },
-    { action: 'export', entityType: 'voter', details: 'Exported voter data to CSV' },
-    { action: 'view', entityType: 'booth', details: 'Viewed booth statistics', acNumber: 118 },
-    { action: 'delete', entityType: 'survey', details: 'Deleted invalid survey entry', acNumber: 102 },
-    { action: 'create', entityType: 'admin', details: 'Created new ACIM account' },
-    { action: 'update', entityType: 'booth', details: 'Updated booth status to Active', acNumber: 123 },
-    { action: 'login', entityType: 'voter', details: 'User logged in successfully' },
-  ];
-
-  for (let i = 0; i < 50; i++) {
-    const user = users[Math.floor(Math.random() * users.length)];
-    const action = actions[Math.floor(Math.random() * actions.length)];
-    const timestamp = new Date(now.getTime() - Math.random() * 7 * 24 * 60 * 60 * 1000); // Last 7 days
-
-    activities.push({
-      id: `act_${i + 1}`,
-      timestamp,
-      userId: user.id,
-      userName: user.name,
-      userRole: user.role,
-      action: action.action,
-      entityType: action.entityType,
-      entityId: `${action.entityType}_${Math.floor(Math.random() * 1000)}`,
-      details: action.details,
-      metadata: { timestamp: timestamp.toISOString() },
-      ipAddress: `192.168.1.${Math.floor(Math.random() * 255)}`,
-      acNumber: action.acNumber,
-    });
-  }
-
-  return activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-};
-
 export const ActivityLogProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
-  const [activities, setActivities] = useState<ActivityLog[]>(() => generateMockActivities());
+  const [activities, setActivities] = useState<ActivityLog[]>([]);
 
   const logActivity = useCallback((activity: Omit<ActivityLog, 'id' | 'timestamp' | 'userId' | 'userName' | 'userRole'>) => {
     if (!user) return;

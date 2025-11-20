@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useActivityLog, ActivityAction, EntityType } from '@/contexts/ActivityLogContext';
+import { useState, useEffect } from 'react';
+import { useActivityLog, ActivityAction, EntityType, ActivityLog as ActivityLogType } from '@/contexts/ActivityLogContext';
 import { Card } from './ui/card';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -19,9 +19,11 @@ import {
   TableRow,
 } from './ui/table';
 import { Badge } from './ui/badge';
-import { Search, Download, Calendar } from 'lucide-react';
+import { Search, Download, Calendar, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/AuthContext';
+import { api } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 
 const actionColors: Record<ActivityAction, string> = {
   create: 'bg-green-500/10 text-green-500',
@@ -34,20 +36,134 @@ const actionColors: Record<ActivityAction, string> = {
   logout: 'bg-orange-500/10 text-orange-500',
 };
 
+interface BoothAgentActivity {
+  _id: string;
+  name: string;
+  phone: string;
+  email: string;
+  booth_agent_id?: string;
+  booth_id?: string;
+  assignedAC?: number;
+  aci_name?: string;
+  assignedBoothId?: {
+    _id: string;
+    boothName: string;
+    boothCode: string;
+  } | string;
+  status?: string;
+  isActive?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const ActivityLog = () => {
   const { getFilteredActivities } = useActivityLog();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [actionFilter, setActionFilter] = useState<ActivityAction | 'all'>('all');
   const [entityFilter, setEntityFilter] = useState<EntityType | 'all'>('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [boothAgentActivities, setBoothAgentActivities] = useState<BoothAgentActivity[]>([]);
+  const [loadingBoothAgents, setLoadingBoothAgents] = useState(false);
   const itemsPerPage = 20;
+
+  // Fetch booth agent activities
+  useEffect(() => {
+    fetchBoothAgentActivities();
+  }, []);
+
+  const fetchBoothAgentActivities = async () => {
+    try {
+      setLoadingBoothAgents(true);
+      const response = await api.get('/rbac/booth-agents');
+      
+      if (response.success && response.agents) {
+        setBoothAgentActivities(response.agents || []);
+      }
+    } catch (error: any) {
+      console.error('Error fetching booth agent activities:', error);
+      // Don't show toast for this as it's a background fetch
+    } finally {
+      setLoadingBoothAgents(false);
+    }
+  };
+
+  // Convert booth agent activities to activity log format
+  const convertBoothAgentsToActivities = (agents: BoothAgentActivity[]): ActivityLogType[] => {
+    return agents.flatMap((agent) => {
+      const activities: ActivityLogType[] = [];
+      
+      // Activity for agent creation
+      if (agent.createdAt) {
+        activities.push({
+          id: `booth_agent_${agent._id}_created`,
+          timestamp: new Date(agent.createdAt),
+          userId: agent._id,
+          userName: agent.name || 'Unknown Agent',
+          userRole: 'L9' as const, // Booth Agent role mapped to L9 for display
+          action: 'create' as ActivityAction,
+          entityType: 'agent' as EntityType,
+          entityId: agent._id,
+          details: `Booth Agent ${agent.name || agent.booth_agent_id || 'Unknown'} created${agent.assignedAC ? ` in AC ${agent.assignedAC}` : ''}${typeof agent.assignedBoothId === 'object' && agent.assignedBoothId ? ` - Assigned to ${agent.assignedBoothId.boothName} (${agent.assignedBoothId.boothCode})` : ''}`,
+          metadata: {
+            boothAgentId: agent.booth_agent_id,
+            phone: agent.phone,
+            email: agent.email,
+          },
+          acNumber: agent.assignedAC,
+        });
+      }
+
+      // Activity for agent update if updatedAt differs from createdAt
+      if (agent.updatedAt && agent.updatedAt !== agent.createdAt) {
+        const updatedDetails = [];
+        if (typeof agent.assignedBoothId === 'object' && agent.assignedBoothId) {
+          updatedDetails.push(`Assigned to ${agent.assignedBoothId.boothName} (${agent.assignedBoothId.boothCode})`);
+        }
+        if (agent.status) {
+          updatedDetails.push(`Status: ${agent.status}`);
+        }
+        
+        if (updatedDetails.length > 0 || agent.updatedAt) {
+          activities.push({
+            id: `booth_agent_${agent._id}_updated`,
+            timestamp: new Date(agent.updatedAt),
+            userId: agent._id,
+            userName: agent.name || 'Unknown Agent',
+            userRole: 'L9' as const,
+            action: 'update' as ActivityAction,
+            entityType: 'agent' as EntityType,
+            entityId: agent._id,
+            details: `Booth Agent ${agent.name || agent.booth_agent_id || 'Unknown'} updated${updatedDetails.length > 0 ? ` - ${updatedDetails.join(', ')}` : ''}`,
+            metadata: {
+              boothAgentId: agent.booth_agent_id,
+              status: agent.status,
+              isActive: agent.isActive,
+            },
+            acNumber: agent.assignedAC,
+          });
+        }
+      }
+
+      return activities;
+    });
+  };
 
   const filters: any = {};
   if (actionFilter !== 'all') filters.action = actionFilter;
   if (entityFilter !== 'all') filters.entityType = entityFilter;
 
-  let activities = getFilteredActivities(filters);
+  // Get activities from context
+  let contextActivities = getFilteredActivities(filters);
+  
+  // Convert booth agent activities and merge with context activities
+  const boothAgentActivityLogs = convertBoothAgentsToActivities(boothAgentActivities);
+  
+  // Merge and sort all activities by timestamp
+  let activities = [...contextActivities, ...boothAgentActivityLogs].sort(
+    (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+  );
 
   // Search filter
   if (searchQuery) {
@@ -134,6 +250,17 @@ export const ActivityLog = () => {
               <SelectItem value="moderator">Moderator</SelectItem>
             </SelectContent>
           </Select>
+          <Button 
+            onClick={fetchBoothAgentActivities} 
+            variant="outline"
+            disabled={loadingBoothAgents}
+            title="Refresh booth agent activities"
+          >
+            {loadingBoothAgents ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : null}
+            Refresh
+          </Button>
           <Button onClick={handleExport} variant="outline">
             <Download className="h-4 w-4 mr-2" />
             Export
@@ -173,7 +300,9 @@ export const ActivityLog = () => {
                     <TableCell className="whitespace-nowrap">
                       <div>
                         <p className="text-sm font-medium">{activity.userName}</p>
-                        <p className="text-xs text-muted-foreground">{activity.userRole}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {activity.userRole === 'L9' ? 'Booth Agent' : activity.userRole}
+                        </p>
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
