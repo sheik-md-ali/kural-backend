@@ -132,7 +132,9 @@ app.use(
 );
 
 // Middleware to restore user from session
+// This MUST run before any route handlers that use req.user
 app.use((req, res, next) => {
+  // Always try to restore user from session
   if (req.session && req.session.user) {
     req.user = req.session.user;
     // Only log in development
@@ -143,12 +145,6 @@ app.use((req, res, next) => {
         sessionId: req.sessionID
       });
     }
-  } else if (process.env.NODE_ENV === 'development') {
-    console.log('No user in session:', {
-      hasSession: !!req.session,
-      sessionId: req.sessionID,
-      hasCookies: !!req.headers.cookie
-    });
   }
   next();
 });
@@ -891,10 +887,13 @@ app.post("/api/auth/logout", (req, res) => {
     if (err) {
       return res.status(500).json({ message: "Failed to logout" });
     }
+    // Clear cookie with same settings as when it was set
     res.clearCookie("kural.sid", {
       path: '/',
       httpOnly: true,
-      sameSite: 'lax',
+      secure: isProduction,
+      sameSite: SESSION_COOKIE_SAMESITE,
+      domain: SESSION_COOKIE_DOMAIN || (isProduction ? '.kuralapp.in' : undefined),
     });
     return res.json({ message: "Logged out successfully" });
   });
@@ -904,16 +903,19 @@ app.post("/api/auth/logout", (req, res) => {
 app.get("/api/auth/me", async (req, res) => {
   // Ensure session is initialized
   if (!req.session) {
-    console.log('Auth check - No session object found');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Auth check - No session object found');
+    }
     return res.status(401).json({ message: "Not authenticated" });
   }
   
-  // Debug logging
-  console.log('Auth check - Session exists:', !!req.session);
-  console.log('Auth check - User in session:', !!req.session?.user);
-  console.log('Auth check - Session ID:', req.sessionID);
-  console.log('Auth check - Cookies received:', req.headers.cookie);
-  console.log('Auth check - Session keys:', req.session ? Object.keys(req.session) : 'no session');
+  // Debug logging (only in development)
+  if (process.env.NODE_ENV === 'development') {
+    console.log('Auth check - Session exists:', !!req.session);
+    console.log('Auth check - User in session:', !!req.session?.user);
+    console.log('Auth check - Session ID:', req.sessionID);
+    console.log('Auth check - Has cookies:', !!req.headers.cookie);
+  }
   
   if (req.session && req.session.user) {
     // If user exists in session, verify it's still valid by checking the database
@@ -985,9 +987,32 @@ app.get("/api/auth/me", async (req, res) => {
     }
   }
   
-  // Log more details for debugging
-  console.log('Auth check - No user found in session');
+  // Log more details for debugging (only in development)
+  if (process.env.NODE_ENV === 'development') {
+    console.log('Auth check - No user found in session');
+    console.log('Auth check - Session ID:', req.sessionID);
+    console.log('Auth check - Has cookies:', !!req.headers.cookie);
+  }
   return res.status(401).json({ message: "Not authenticated" });
+});
+
+// Diagnostic endpoint to check session/cookie status
+app.get("/api/auth/debug", (req, res) => {
+  res.json({
+    hasSession: !!req.session,
+    hasSessionUser: !!(req.session && req.session.user),
+    sessionId: req.sessionID,
+    hasCookies: !!req.headers.cookie,
+    cookieHeader: req.headers.cookie || null,
+    userAgent: req.headers['user-agent'],
+    origin: req.headers.origin,
+    referer: req.headers.referer,
+    cookieSettings: {
+      secure: isProduction,
+      sameSite: SESSION_COOKIE_SAMESITE,
+      domain: SESSION_COOKIE_DOMAIN || (isProduction ? '.kuralapp.in' : undefined),
+    }
+  });
 });
 
 app.get("/api/surveys", async (req, res) => {
