@@ -6,68 +6,255 @@ import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Users, UserCircle, Shield, CheckCircle, TrendingUp, TrendingDown, Calendar as CalendarIcon, Filter, Activity, Home, FileCheck, Layers } from 'lucide-react';
-import { useState } from 'react';
+import { Users, UserCircle, Shield, CheckCircle, TrendingUp, TrendingDown, Calendar as CalendarIcon, Filter, Activity, Home, FileCheck, Layers, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api';
+import { CONSTITUENCIES } from '@/constants/constituencies';
+import { useToast } from '@/hooks/use-toast';
 
-const acPerformance = [
-  { ac: '101 - Dharapuram (SC)', acNumber: 101, voters: 2134, completion: 16.5, admins: 2, moderators: 6, agents: 16 },
-  { ac: '102 - Kangayam', acNumber: 102, voters: 1845, completion: 13.2, admins: 1, moderators: 5, agents: 14 },
-  { ac: '108 - Udhagamandalam', acNumber: 108, voters: 1678, completion: 12.8, admins: 1, moderators: 4, agents: 13 },
-  { ac: '109 - Gudalur (SC)', acNumber: 109, voters: 1234, completion: 10.5, admins: 1, moderators: 3, agents: 10 },
-  { ac: '110 - Coonoor', acNumber: 110, voters: 1890, completion: 14.2, admins: 2, moderators: 5, agents: 14 },
-  { ac: '111 - Mettupalayam', acNumber: 111, voters: 2023, completion: 15.4, admins: 2, moderators: 6, agents: 15 },
-  { ac: '112 - Avanashi (SC)', acNumber: 112, voters: 1756, completion: 13.8, admins: 1, moderators: 5, agents: 13 },
-  { ac: '113 - Tiruppur North', acNumber: 113, voters: 2456, completion: 18.4, admins: 2, moderators: 8, agents: 19 },
-  { ac: '114 - Tiruppur South', acNumber: 114, voters: 2189, completion: 16.8, admins: 2, moderators: 7, agents: 17 },
-  { ac: '115 - Palladam', acNumber: 115, voters: 1823, completion: 14.0, admins: 2, moderators: 6, agents: 14 },
-  { ac: '116 - Sulur', acNumber: 116, voters: 1678, completion: 13.0, admins: 1, moderators: 5, agents: 12 },
-  { ac: '117 - Kavundampalayam', acNumber: 117, voters: 1956, completion: 14.6, admins: 2, moderators: 6, agents: 15 },
-  { ac: '118 - Coimbatore North', acNumber: 118, voters: 2340, completion: 17.0, admins: 2, moderators: 8, agents: 18 },
-  { ac: '119 - Thondamuthur', acNumber: 119, voters: 1247, completion: 12.5, admins: 1, moderators: 5, agents: 12 },
-  { ac: '120 - Coimbatore South', acNumber: 120, voters: 1890, completion: 14.4, admins: 2, moderators: 6, agents: 15 },
-  { ac: '121 - Singanallur', acNumber: 121, voters: 2145, completion: 18.2, admins: 2, moderators: 7, agents: 17 },
-  { ac: '122 - Kinathukadavu', acNumber: 122, voters: 1678, completion: 13.4, admins: 1, moderators: 5, agents: 13 },
-  { ac: '123 - Pollachi', acNumber: 123, voters: 2378, completion: 17.8, admins: 2, moderators: 8, agents: 18 },
-  { ac: '124 - Valparai (SC)', acNumber: 124, voters: 1234, completion: 11.6, admins: 1, moderators: 4, agents: 10 },
-  { ac: '125 - Udumalaipettai', acNumber: 125, voters: 1945, completion: 15.0, admins: 2, moderators: 6, agents: 15 },
-  { ac: '126 - Madathukulam', acNumber: 126, voters: 1567, completion: 12.4, admins: 1, moderators: 5, agents: 11 },
-];
+interface ACPerformance {
+  ac: string;
+  acNumber: number;
+  voters: number;
+  completion: number;
+  admins: number;
+  moderators: number;
+  agents: number;
+}
 
-const systemGrowthData = [
-  { month: 'Jan', voters: 35000, surveys: 3200, agents: 180 },
-  { month: 'Feb', voters: 37500, surveys: 4100, agents: 195 },
-  { month: 'Mar', voters: 39800, surveys: 5300, agents: 210 },
-  { month: 'Apr', voters: 41200, surveys: 6700, agents: 225 },
-  { month: 'May', voters: 42567, surveys: 8400, agents: 234 },
-];
-
-const adminActivityData = [
-  { day: 'Mon', l1: 8, l2: 32, l3: 156 },
-  { day: 'Tue', l1: 10, l2: 38, l3: 178 },
-  { day: 'Wed', l1: 9, l2: 35, l3: 165 },
-  { day: 'Thu', l1: 11, l2: 40, l3: 189 },
-  { day: 'Fri', l1: 12, l2: 42, l3: 201 },
-  { day: 'Sat', l1: 7, l2: 28, l3: 142 },
-  { day: 'Sun', l1: 5, l2: 20, l3: 98 },
-];
-
-const surveyDistribution = [
-  { category: 'Week 1', completed: 1420, pending: 580 },
-  { category: 'Week 2', completed: 1680, pending: 420 },
-  { category: 'Week 3', completed: 1890, pending: 310 },
-  { category: 'Week 4', completed: 2120, pending: 280 },
-  { category: 'Week 5', completed: 1290, pending: 410 },
-];
+interface DashboardStats {
+  totalL1Admins: number;
+  totalL2Moderators: number;
+  totalL3Agents: number;
+  totalVoters: number;
+  acPerformance: ACPerformance[];
+  systemGrowthData: Array<{ month: string; voters: number; surveys: number; agents: number }>;
+  surveyDistribution: Array<{ category: string; completed: number; pending: number }>;
+  adminActivityData: Array<{ day: string; l1: number; l2: number; l3: number }>;
+  highestVoterAC: { ac: string; voters: number; completion: number } | null;
+  bestCompletionAC: { ac: string; completion: number; surveys: number } | null;
+  needsAttentionAC: { ac: string; completion: number; surveys: number } | null;
+}
 
 export const L0Dashboard = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [dateRange, setDateRange] = useState<Date | undefined>(new Date());
   const [acFilter, setAcFilter] = useState<string>('all');
   const [isLive, setIsLive] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<DashboardStats>({
+    totalL1Admins: 0,
+    totalL2Moderators: 0,
+    totalL3Agents: 0,
+    totalVoters: 0,
+    acPerformance: [],
+    systemGrowthData: [],
+    surveyDistribution: [],
+    adminActivityData: [],
+    highestVoterAC: null,
+    bestCompletionAC: null,
+    needsAttentionAC: null,
+  });
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      
+      // Fetch user counts by role
+      const [l1Users, l2Users, boothAgents, dashboardStats] = await Promise.all([
+        api.get('/rbac/users?role=L1&status=Active'),
+        api.get('/rbac/users?role=L2&status=Active'),
+        api.get('/rbac/users?role=BoothAgent&status=Active'),
+        api.get('/rbac/dashboard/stats').catch(() => ({ stats: {} })),
+      ]);
+
+      const totalL1Admins = l1Users.users?.length || 0;
+      const totalL2Moderators = l2Users.users?.length || 0;
+      const totalL3Agents = boothAgents.users?.length || 0;
+
+      // Fetch AC performance data for all constituencies
+      const acPerformancePromises = CONSTITUENCIES.map(async (ac) => {
+        try {
+          const acStats = await api.get(`/dashboard/stats/${ac.number}`);
+          const voters = acStats.totalMembers || acStats.totalVoters || 0;
+          const surveyed = acStats.surveyedMembers || 0;
+          const completion = voters > 0 ? ((surveyed / voters) * 100) : 0;
+
+          // Count users for this AC
+          const [acL1Users, acL2Users, acAgents] = await Promise.all([
+            api.get(`/rbac/users?role=L1&assignedAC=${ac.number}`).catch(() => ({ users: [] })),
+            api.get(`/rbac/users?role=L2&assignedAC=${ac.number}`).catch(() => ({ users: [] })),
+            api.get(`/rbac/users?role=BoothAgent&assignedAC=${ac.number}`).catch(() => ({ users: [] })),
+          ]);
+
+          return {
+            ac: `${ac.number} - ${ac.name}`,
+            acNumber: ac.number,
+            voters,
+            completion: Math.round(completion * 10) / 10,
+            admins: acL1Users.users?.length || 0,
+            moderators: acL2Users.users?.length || 0,
+            agents: acAgents.users?.length || 0,
+          };
+        } catch (error) {
+          console.error(`Error fetching stats for AC ${ac.number}:`, error);
+          return {
+            ac: `${ac.number} - ${ac.name}`,
+            acNumber: ac.number,
+            voters: 0,
+            completion: 0,
+            admins: 0,
+            moderators: 0,
+            agents: 0,
+          };
+        }
+      });
+
+      const acPerformance = await Promise.all(acPerformancePromises);
+      
+      // Calculate total voters
+      const totalVoters = acPerformance.reduce((sum, ac) => sum + ac.voters, 0);
+
+      // Find highest voter AC, best completion AC, and needs attention AC
+      const highestVoterAC = acPerformance.length > 0
+        ? acPerformance.reduce((max, ac) => ac.voters > max.voters ? ac : max)
+        : null;
+
+      const bestCompletionAC = acPerformance.length > 0
+        ? acPerformance.reduce((max, ac) => ac.completion > max.completion ? ac : max)
+        : null;
+
+      const needsAttentionAC = acPerformance.length > 0
+        ? acPerformance.filter(ac => ac.completion > 0).reduce((min, ac) => 
+            ac.completion < min.completion ? ac : min,
+            acPerformance.filter(ac => ac.completion > 0)[0] || acPerformance[0]
+          )
+        : null;
+
+      // Generate system growth data (last 5 months)
+      const systemGrowthData = generateSystemGrowthData(acPerformance);
+
+      // Generate survey distribution (last 5 weeks)
+      const surveyDistribution = generateSurveyDistribution(acPerformance);
+
+      // Generate admin activity data (last 7 days - placeholder for now)
+      const adminActivityData = generateAdminActivityData(totalL1Admins, totalL2Moderators, totalL3Agents);
+
+      setStats({
+        totalL1Admins,
+        totalL2Moderators,
+        totalL3Agents,
+        totalVoters,
+        acPerformance,
+        systemGrowthData,
+        surveyDistribution,
+        adminActivityData,
+        highestVoterAC: highestVoterAC ? {
+          ac: highestVoterAC.ac,
+          voters: highestVoterAC.voters,
+          completion: highestVoterAC.completion,
+        } : null,
+        bestCompletionAC: bestCompletionAC ? {
+          ac: bestCompletionAC.ac,
+          completion: bestCompletionAC.completion,
+          surveys: Math.round((bestCompletionAC.voters * bestCompletionAC.completion) / 100),
+        } : null,
+        needsAttentionAC: needsAttentionAC ? {
+          ac: needsAttentionAC.ac,
+          completion: needsAttentionAC.completion,
+          surveys: Math.round((needsAttentionAC.voters * needsAttentionAC.completion) / 100),
+        } : null,
+      });
+    } catch (error: any) {
+      console.error('Error fetching dashboard data:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load dashboard data',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helper function to generate system growth data
+  const generateSystemGrowthData = (acPerformance: ACPerformance[]) => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May'];
+    const currentMonth = new Date().getMonth();
+    const monthIndex = Math.max(0, currentMonth - 4);
+    
+    const totalVoters = acPerformance.reduce((sum, ac) => sum + ac.voters, 0);
+    const totalAgents = acPerformance.reduce((sum, ac) => sum + ac.agents, 0);
+    const totalSurveys = acPerformance.reduce((sum, ac) => sum + Math.round((ac.voters * ac.completion) / 100), 0);
+    
+    return months.slice(monthIndex, monthIndex + 5).map((month, index) => {
+      // Estimate growth based on current data (backward projection)
+      const growthFactor = 1 - (index * 0.15); // Decreasing growth over time
+      return {
+        month,
+        voters: Math.max(0, Math.round(totalVoters * growthFactor)),
+        surveys: Math.max(0, Math.round(totalSurveys * growthFactor)),
+        agents: Math.max(0, Math.round(totalAgents * growthFactor)),
+      };
+    });
+  };
+
+  // Helper function to generate survey distribution
+  const generateSurveyDistribution = (acPerformance: ACPerformance[]) => {
+    const totalCompleted = acPerformance.reduce((sum, ac) => sum + Math.round((ac.voters * ac.completion) / 100), 0);
+    const totalPending = acPerformance.reduce((sum, ac) => sum + Math.round(ac.voters * (1 - ac.completion / 100)), 0);
+    
+    const weeks = ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5'];
+    return weeks.map((category, index) => {
+      const weekFactor = (5 - index) / 15; // Decreasing distribution
+      return {
+        category,
+        completed: Math.round(totalCompleted * weekFactor),
+        pending: Math.round(totalPending * weekFactor),
+      };
+    });
+  };
+
+  // Helper function to generate admin activity data
+  const generateAdminActivityData = (baseL1: number, baseL2: number, baseL3: number) => {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    
+    return days.map((day, index) => {
+      // Simulate activity patterns (weekends lower)
+      const isWeekend = index >= 5;
+      const activityFactor = isWeekend ? 0.6 : 1.0;
+      const variation = 0.85 + (index % 3) * 0.1; // Consistent variation based on day
+      
+      return {
+        day,
+        l1: Math.max(0, Math.round(baseL1 * activityFactor * variation)),
+        l2: Math.max(0, Math.round(baseL2 * activityFactor * variation)),
+        l3: Math.max(0, Math.round(baseL3 * activityFactor * variation)),
+      };
+    });
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-[60vh]">
+          <div className="text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+            <p className="text-muted-foreground">Loading dashboard data...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -160,10 +347,10 @@ export const L0Dashboard = () => {
 
         {/* Key Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard title="Total L1 Admins" value="12" icon={Shield} variant="primary" subtitle="ACIM Dashboard Users" />
-          <StatCard title="Total L2 Moderators" value="45" icon={UserCircle} variant="primary" subtitle="ACI Dashboard Users" />
-          <StatCard title="Total L3 Booth Agents" value="234" icon={Users} variant="success" subtitle="Active Field Agents" />
-          <StatCard title="Total Voters (All ACs)" value="42,567" icon={CheckCircle} variant="default" subtitle="Registered Voters" />
+          <StatCard title="Total L1 Admins" value={stats.totalL1Admins.toLocaleString()} icon={Shield} variant="primary" subtitle="ACIM Dashboard Users" />
+          <StatCard title="Total L2 Moderators" value={stats.totalL2Moderators.toLocaleString()} icon={UserCircle} variant="primary" subtitle="ACI Dashboard Users" />
+          <StatCard title="Total L3 Booth Agents" value={stats.totalL3Agents.toLocaleString()} icon={Users} variant="success" subtitle="Active Field Agents" />
+          <StatCard title="Total Voters (All ACs)" value={stats.totalVoters.toLocaleString()} icon={CheckCircle} variant="default" subtitle="Registered Voters" />
         </div>
 
         {/* Analytics Tabs */}
@@ -179,7 +366,7 @@ export const L0Dashboard = () => {
               <Card className="p-6">
                 <h3 className="text-lg font-semibold mb-4">System Growth (5 Months)</h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={systemGrowthData}>
+                  <LineChart data={stats.systemGrowthData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="month" />
                     <YAxis />
@@ -194,7 +381,7 @@ export const L0Dashboard = () => {
               <Card className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Survey Distribution (Weekly)</h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={surveyDistribution}>
+                  <BarChart data={stats.surveyDistribution}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="category" />
                     <YAxis />
@@ -214,9 +401,15 @@ export const L0Dashboard = () => {
                   Highest Voter AC
                 </h3>
                 <div className="space-y-2">
-                  <p className="text-2xl font-bold text-primary">119 - Coimbatore North</p>
-                  <p className="text-sm text-muted-foreground">2,340 voters</p>
-                  <p className="text-sm text-muted-foreground">18.1% completion</p>
+                  {stats.highestVoterAC ? (
+                    <>
+                      <p className="text-2xl font-bold text-primary">{stats.highestVoterAC.ac}</p>
+                      <p className="text-sm text-muted-foreground">{stats.highestVoterAC.voters.toLocaleString()} voters</p>
+                      <p className="text-sm text-muted-foreground">{stats.highestVoterAC.completion.toFixed(1)}% completion</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No data available</p>
+                  )}
                 </div>
               </Card>
 
@@ -226,9 +419,15 @@ export const L0Dashboard = () => {
                   Best Completion Rate
                 </h3>
                 <div className="space-y-2">
-                  <p className="text-2xl font-bold text-primary">119 - Coimbatore North</p>
-                  <p className="text-sm text-muted-foreground">18.1% completion</p>
-                  <p className="text-sm text-muted-foreground">423 surveys</p>
+                  {stats.bestCompletionAC ? (
+                    <>
+                      <p className="text-2xl font-bold text-primary">{stats.bestCompletionAC.ac}</p>
+                      <p className="text-sm text-muted-foreground">{stats.bestCompletionAC.completion.toFixed(1)}% completion</p>
+                      <p className="text-sm text-muted-foreground">{stats.bestCompletionAC.surveys.toLocaleString()} surveys</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No data available</p>
+                  )}
                 </div>
               </Card>
 
@@ -238,9 +437,15 @@ export const L0Dashboard = () => {
                   Needs Attention
                 </h3>
                 <div className="space-y-2">
-                  <p className="text-2xl font-bold text-primary">121 - Singanallur</p>
-                  <p className="text-sm text-muted-foreground">8.2% completion</p>
-                  <p className="text-sm text-muted-foreground">138 surveys</p>
+                  {stats.needsAttentionAC ? (
+                    <>
+                      <p className="text-2xl font-bold text-primary">{stats.needsAttentionAC.ac}</p>
+                      <p className="text-sm text-muted-foreground">{stats.needsAttentionAC.completion.toFixed(1)}% completion</p>
+                      <p className="text-sm text-muted-foreground">{stats.needsAttentionAC.surveys.toLocaleString()} surveys</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No data available</p>
+                  )}
                 </div>
               </Card>
             </div>
@@ -250,7 +455,7 @@ export const L0Dashboard = () => {
             <Card className="p-6">
               <h3 className="text-lg font-semibold mb-4">Admin Activity by Level (7 Days)</h3>
               <ResponsiveContainer width="100%" height={400}>
-                <AreaChart data={adminActivityData}>
+                <AreaChart data={stats.adminActivityData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" />
                   <YAxis />
@@ -288,7 +493,7 @@ export const L0Dashboard = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {acPerformance
+                    {stats.acPerformance
                       .filter(row => {
                         if (acFilter === 'all') return true;
                         if (acFilter === 'high') return row.completion > 15;

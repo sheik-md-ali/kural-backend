@@ -30,6 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
@@ -86,7 +87,7 @@ const UserManagement: React.FC = () => {
   const [booths, setBooths] = useState<Booth[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const [activeTab, setActiveTab] = useState<string>("L0");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -111,12 +112,16 @@ const UserManagement: React.FC = () => {
   useEffect(() => {
     fetchUsers();
     fetchBooths();
-  }, [roleFilter, statusFilter]);
+  }, [activeTab, statusFilter]);
 
   // Handle URL parameter to auto-open dialog with pre-selected role
   useEffect(() => {
     const createRole = searchParams.get('create');
     if (createRole && (createRole === 'L1' || createRole === 'L2') && currentUser?.role === 'L0') {
+      // Set the active tab to match the role
+      if (createRole === 'L1') setActiveTab('L1');
+      if (createRole === 'L2') setActiveTab('L2');
+      
       setFormData(prev => ({
         ...prev,
         role: createRole,
@@ -140,16 +145,33 @@ const UserManagement: React.FC = () => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
-      if (roleFilter !== "all") {
-        params.append("role", roleFilter);
+      
+      // Map tab to role
+      const roleMap: { [key: string]: string } = {
+        "L0": "L0",
+        "L1": "L1",
+        "L2": "L2",
+        "BoothAgent": "BoothAgent"
+      };
+      
+      if (activeTab && roleMap[activeTab]) {
+        params.append("role", roleMap[activeTab]);
       }
+      
       if (statusFilter !== "all") {
         params.append("status", statusFilter);
       }
 
       const response = await api.get(`/rbac/users?${params.toString()}`);
-      setUsers(response.users || []);
+      const usersList = response.users || [];
+      
+      // Log for debugging
+      console.log(`[UserManagement] Fetched ${usersList.length} users for tab: ${activeTab}`);
+      console.log(`[UserManagement] Total matching query: ${response.totalCount || response.count || usersList.length}`);
+      
+      setUsers(usersList);
     } catch (error: any) {
+      console.error("Error fetching users:", error);
       toast({
         title: "Error",
         description: error.message || "Failed to fetch users",
@@ -174,11 +196,18 @@ const UserManagement: React.FC = () => {
           status: formData.status,
         };
 
-        if (formData.assignedAC) {
-          updateData.assignedAC = parseInt(formData.assignedAC);
-        }
-        if (formData.aci_name) {
-          updateData.aci_name = formData.aci_name;
+        // Don't set assignedAC for L1 (ACIM) users
+        if (formData.role !== "L1") {
+          if (formData.assignedAC) {
+            updateData.assignedAC = parseInt(formData.assignedAC);
+          }
+          if (formData.aci_name) {
+            updateData.aci_name = formData.aci_name;
+          }
+        } else {
+          // For L1 users, explicitly remove assignedAC if it exists
+          updateData.assignedAC = undefined;
+          updateData.aci_name = undefined;
         }
         if (formData.assignedBoothId) {
           updateData.assignedBoothId = formData.assignedBoothId;
@@ -203,11 +232,14 @@ const UserManagement: React.FC = () => {
           status: formData.status,
         };
 
-        if (formData.assignedAC) {
-          createData.assignedAC = parseInt(formData.assignedAC);
-        }
-        if (formData.aci_name) {
-          createData.aci_name = formData.aci_name;
+        // Don't set assignedAC for L1 (ACIM) users
+        if (formData.role !== "L1") {
+          if (formData.assignedAC) {
+            createData.assignedAC = parseInt(formData.assignedAC);
+          }
+          if (formData.aci_name) {
+            createData.aci_name = formData.aci_name;
+          }
         }
         if (formData.assignedBoothId) {
           createData.assignedBoothId = formData.assignedBoothId;
@@ -272,12 +304,18 @@ const UserManagement: React.FC = () => {
   };
 
   const resetForm = () => {
+    // Set default role based on active tab
+    const defaultRole = activeTab === "L0" ? "L0" : 
+                       activeTab === "L1" ? "L1" : 
+                       activeTab === "L2" ? "L2" : 
+                       "BoothAgent";
+    
     setFormData({
       name: "",
       email: "",
       phone: "",
       password: "",
-      role: "BoothAgent",
+      role: defaultRole,
       assignedAC: currentUser?.assignedAC?.toString() || "",
       aci_name: currentUser?.aciName || "",
       assignedBoothId: "",
@@ -292,18 +330,158 @@ const UserManagement: React.FC = () => {
       user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.phone?.includes(searchTerm);
-    return matchesSearch;
+    
+    // Also filter by active tab role (double-check)
+    const roleMap: { [key: string]: string } = {
+      "L0": "L0",
+      "L1": "L1",
+      "L2": "L2",
+      "BoothAgent": "BoothAgent"
+    };
+    const matchesRole = !activeTab || !roleMap[activeTab] || user.role === roleMap[activeTab] || 
+      (roleMap[activeTab] === "BoothAgent" && (user.role === "Booth Agent" || user.role === "BoothAgent"));
+    
+    return matchesSearch && matchesRole;
   });
 
   const getRoleBadge = (role: string) => {
     const roleConfig: { [key: string]: { label: string; variant: any } } = {
+      L0: { label: "System Admin", variant: "default" },
       L1: { label: "ACIM", variant: "default" },
       L2: { label: "ACI", variant: "secondary" },
       BoothAgent: { label: "Booth Agent", variant: "outline" },
+      "Booth Agent": { label: "Booth Agent", variant: "outline" },
     };
 
     const config = roleConfig[role] || { label: role, variant: "outline" };
     return <Badge variant={config.variant}>{config.label}</Badge>;
+  };
+
+  const renderUsersTable = () => {
+    // Show Assigned AC column for L2 (ACI) and Booth Agents, hide for L0 (System Admin) and L1 (ACIM)
+    const showAssignedAC = activeTab === "L2" || activeTab === "BoothAgent";
+    // Show Booth Number column only for Booth Agents
+    const showBoothNumber = activeTab === "BoothAgent";
+
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center p-8">
+          <div className="text-muted-foreground">Loading users...</div>
+        </div>
+      );
+    }
+
+    if (filteredUsers.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center p-8 text-center">
+          <Users className="h-12 w-12 text-muted-foreground mb-4" />
+          <p className="text-muted-foreground">No users found</p>
+        </div>
+      );
+    }
+
+    return (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Contact</TableHead>
+            <TableHead>Role</TableHead>
+            {showAssignedAC && <TableHead>Assigned AC</TableHead>}
+            {showBoothNumber && <TableHead>Booth Number</TableHead>}
+            <TableHead>Status</TableHead>
+            <TableHead>Created</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filteredUsers.map((user) => (
+            <TableRow key={user._id}>
+              <TableCell className="font-medium">{user.name}</TableCell>
+              <TableCell>
+                <div className="space-y-1">
+                  {user.email && (
+                    <div className="text-sm">{user.email}</div>
+                  )}
+                  {user.phone && (
+                    <div className="text-sm text-muted-foreground">
+                      {user.phone}
+                    </div>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>{getRoleBadge(user.role)}</TableCell>
+              {showAssignedAC && (
+                <TableCell>
+                  {user.assignedAC ? (
+                    <div>
+                      <div className="font-medium">AC {user.assignedAC}</div>
+                      {user.aci_name && (
+                        <div className="text-sm text-muted-foreground">
+                          {user.aci_name}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+              )}
+              {showBoothNumber && (
+                <TableCell>
+                  {user.assignedBoothId ? (
+                    <div>
+                      <div className="font-medium">{user.assignedBoothId.boothCode || user.assignedBoothId.boothName}</div>
+                      {user.assignedBoothId.boothName && user.assignedBoothId.boothCode && (
+                        <div className="text-sm text-muted-foreground">
+                          {user.assignedBoothId.boothName}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+              )}
+              <TableCell>
+                <Badge
+                  variant={
+                    user.status === "Active"
+                      ? "default"
+                      : user.status === "Inactive"
+                      ? "destructive"
+                      : "secondary"
+                  }
+                >
+                  {user.status || "Active"}
+                </Badge>
+              </TableCell>
+              <TableCell>
+                {new Date(user.createdAt).toLocaleDateString()}
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleEdit(user)}
+                  >
+                    <Edit2 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDelete(user._id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    );
   };
 
   return (
@@ -359,8 +537,9 @@ const UserManagement: React.FC = () => {
                         setFormData((prev) => ({
                           ...prev,
                           role: value,
-                          assignedAC: value === "L2" ? prev.assignedAC : "",
-                          aci_name: value === "L2" ? prev.aci_name : "",
+                          // Clear AC assignment when switching to L1 or L0
+                          assignedAC: (value === "L2" || value === "BoothAgent") ? prev.assignedAC : "",
+                          aci_name: (value === "L2" || value === "BoothAgent") ? prev.aci_name : "",
                         }))
                       }
                     >
@@ -368,9 +547,10 @@ const UserManagement: React.FC = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {/* L0 (Super Admin) can create all roles */}
+                        {/* L0 (Super Admin) can create all roles including other L0 users */}
                         {currentUser?.role === "L0" && (
                           <>
+                            <SelectItem value="L0">System Admin</SelectItem>
                             <SelectItem value="L1">ACIM</SelectItem>
                             <SelectItem value="L2">ACI</SelectItem>
                             <SelectItem value="BoothAgent">Booth Agent</SelectItem>
@@ -412,9 +592,10 @@ const UserManagement: React.FC = () => {
                   </div>
                 </div>
 
-                {formData.role === "L2" && (
+                {/* AC Assignment - Only for L2 (ACI) and BoothAgent, NOT for L1 (ACIM) */}
+                {(formData.role === "L2" || formData.role === "BoothAgent") && (
                   <div className="space-y-2">
-                    <Label htmlFor="assignedAC">Assigned AC *</Label>
+                    <Label htmlFor="assignedAC">Assigned AC {formData.role === "L2" ? "*" : ""}</Label>
                     <Select
                       value={formData.assignedAC}
                       onValueChange={(value) => {
@@ -543,118 +724,45 @@ const UserManagement: React.FC = () => {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-[150px]">
-                  <SelectValue />
+                  <SelectValue placeholder="All Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="L1">ACIM</SelectItem>
-                  <SelectItem value="L2">ACI</SelectItem>
-                  <SelectItem value="BoothAgent">Booth Agent</SelectItem>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="Active">Active</SelectItem>
+                  <SelectItem value="Inactive">Inactive</SelectItem>
+                  <SelectItem value="Pending">Pending</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center p-8">
-              <div className="text-muted-foreground">Loading users...</div>
-            </div>
-          ) : filteredUsers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center">
-              <Users className="h-12 w-12 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No users found</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Contact</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Assigned AC</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredUsers.map((user) => (
-                  <TableRow key={user._id}>
-                    <TableCell className="font-medium">{user.name}</TableCell>
-                    <TableCell>
-                      <div className="space-y-1">
-                        {user.email && (
-                          <div className="text-sm">{user.email}</div>
-                        )}
-                        {user.phone && (
-                          <div className="text-sm text-muted-foreground">
-                            {user.phone}
-                          </div>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>{getRoleBadge(user.role)}</TableCell>
-                    <TableCell>
-                      {user.assignedAC ? (
-                        <div>
-                          <div className="font-medium">AC {user.assignedAC}</div>
-                          {user.aci_name && (
-                            <div className="text-sm text-muted-foreground">
-                              {user.aci_name}
-                            </div>
-                          )}
-                          {user.role === "BoothAgent" && user.assignedBoothId && (
-                            <div className="text-sm text-muted-foreground mt-1">
-                              📍 Booth Assigned
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          user.status === "Active"
-                            ? "default"
-                            : user.status === "Inactive"
-                            ? "destructive"
-                            : "secondary"
-                        }
-                      >
-                        {user.status || "Active"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {new Date(user.createdAt).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleEdit(user)}
-                        >
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDelete(user._id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="L0">System Admin</TabsTrigger>
+              <TabsTrigger value="L1">ACIM</TabsTrigger>
+              <TabsTrigger value="L2">ACI</TabsTrigger>
+              <TabsTrigger value="BoothAgent">Booth Agents</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="L0" className="mt-4">
+              {renderUsersTable()}
+            </TabsContent>
+            
+            <TabsContent value="L1" className="mt-4">
+              {renderUsersTable()}
+            </TabsContent>
+            
+            <TabsContent value="L2" className="mt-4">
+              {renderUsersTable()}
+            </TabsContent>
+            
+            <TabsContent value="BoothAgent" className="mt-4">
+              {renderUsersTable()}
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>

@@ -40,8 +40,14 @@ router.get("/users", isAuthenticated, async (req, res) => {
       });
     }
 
-    const query = { isActive: true };
+    // L0 can see all users (including inactive), L1/L2 only see active users
+    const query = {};
     let hasL1Or = false;
+
+    // Only filter by isActive for L1 and L2, L0 can see all users
+    if (req.user.role !== "L0") {
+      query.isActive = true;
+    }
 
     // L1 (ACIM) can only see users they created or in their AC
     if (req.user.role === "L1") {
@@ -122,15 +128,35 @@ router.get("/users", isAuthenticated, async (req, res) => {
       }
     }
 
+    // Fetch all users without any limit
+    // Remove any potential default limits by explicitly setting a very high limit
     const users = await User.find(query)
       .select("-password -passwordHash")
       .populate("createdBy", "name role")
       .populate("assignedBoothId", "boothName boothCode")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(10000) // Set a very high limit to ensure we get all users
+      .lean()
+      .exec();
+
+    // Get the actual count to verify
+    const totalCount = await User.countDocuments(query);
+    
+    // Also get total count without any filters for L0
+    let totalInDatabase = totalCount;
+    if (req.user.role === "L0") {
+      totalInDatabase = await User.countDocuments({});
+    }
+
+    console.log(`[RBAC] Query:`, JSON.stringify(query, null, 2));
+    console.log(`[RBAC] Fetched ${users.length} users out of ${totalCount} total matching query`);
+    console.log(`[RBAC] Total users in database: ${totalInDatabase}`);
 
     res.json({
       success: true,
       count: users.length,
+      totalCount: totalCount,
+      totalInDatabase: totalInDatabase,
       users,
     });
   } catch (error) {
@@ -222,6 +248,14 @@ router.post("/users", isAuthenticated, async (req, res) => {
       });
     }
 
+    // For L1 (ACIM), assignedAC should NOT be set
+    if (role === "L1" && (assignedAC || aci_id)) {
+      return res.status(400).json({
+        success: false,
+        message: "ACIM (L1) users should not have an assigned AC",
+      });
+    }
+
     // Check if user already exists
     if (email || phone) {
       const existingUser = await User.findOne({
@@ -240,14 +274,54 @@ router.post("/users", isAuthenticated, async (req, res) => {
       }
     }
 
-    // Check if booth_agent_id already exists
-    if (booth_agent_id) {
-      const existingAgent = await User.findOne({ booth_agent_id });
+    // Auto-generate booth_agent_id for Booth Agent role if not provided
+    let finalBoothAgentId = booth_agent_id;
+    if ((role === "Booth Agent" || role === "BoothAgent") && assignedBoothId && !booth_agent_id) {
+      // Get the booth to get its booth_id
+      const booth = await Booth.findById(assignedBoothId);
+      if (booth) {
+        const boothIdentifier = booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`;
+        
+        // Count existing agents assigned to this specific booth
+        const existingAgentsCount = await User.countDocuments({ 
+          assignedBoothId: assignedBoothId,
+          role: { $in: ["Booth Agent", "BoothAgent"] },
+          isActive: true 
+        });
+        
+        // Generate booth_agent_id: {booth_id}-{sequence}
+        let sequence = existingAgentsCount + 1;
+        finalBoothAgentId = `${boothIdentifier}-${sequence}`;
+
+        // Check if booth_agent_id already exists
+        let existingAgentId = await User.findOne({ booth_agent_id: finalBoothAgentId });
+        while (existingAgentId) {
+          sequence++;
+          finalBoothAgentId = `${boothIdentifier}-${sequence}`;
+          existingAgentId = await User.findOne({ booth_agent_id: finalBoothAgentId });
+        }
+        
+        console.log(`Auto-generated booth_agent_id: ${finalBoothAgentId} for booth ${boothIdentifier}`);
+      }
+    }
+
+    // Check if booth_agent_id already exists (if manually provided)
+    if (finalBoothAgentId) {
+      const existingAgent = await User.findOne({ booth_agent_id: finalBoothAgentId });
       if (existingAgent) {
         return res.status(409).json({
           success: false,
           message: "Booth agent ID already exists",
         });
+      }
+    }
+
+    // Get booth_id string if assignedBoothId is provided but booth_id is not
+    let finalBoothId = booth_id;
+    if (!finalBoothId && assignedBoothId) {
+      const booth = await Booth.findById(assignedBoothId);
+      if (booth) {
+        finalBoothId = booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`;
       }
     }
 
@@ -266,8 +340,8 @@ router.post("/users", isAuthenticated, async (req, res) => {
       aci_id: aci_id || assignedAC,
       aci_name: aci_name || (req.user.role === "L1" ? req.user.aci_name : undefined),
       assignedBoothId,
-      booth_id,
-      booth_agent_id,
+      booth_id: finalBoothId,
+      booth_agent_id: finalBoothAgentId,
       status: status || "Active",
       createdBy: req.user._id,
       isActive: true,
@@ -410,26 +484,31 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
     }
 
     // Generate booth_agent_id
-    // Format: phone-001, phone-002, etc. (using normalized phone)
-    const existingAgents = await User.countDocuments({ 
-      $or: [
-        { phone: normalizedPhone },
-        { phone: phoneNumber }
-      ],
+    // Format: {booth_id}-{sequence} where sequence is the number of agents for this booth
+    // Get the booth's booth_id (e.g., "BOOTH1-119")
+    const boothIdentifier = booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`;
+    
+    // Count existing agents assigned to this specific booth
+    const existingAgentsCount = await User.countDocuments({ 
+      assignedBoothId: booth_id,
       role: { $in: ["Booth Agent", "BoothAgent"] },
       isActive: true 
     });
-    let sequence = existingAgents + 1;
-    let booth_agent_id = `${normalizedPhone}-${String(sequence).padStart(3, "0")}`;
+    
+    // Generate booth_agent_id: {booth_id}-{sequence}
+    let sequence = existingAgentsCount + 1;
+    let booth_agent_id = `${boothIdentifier}-${sequence}`;
 
     // Check if booth_agent_id already exists (unlikely but possible)
     let existingAgentId = await User.findOne({ booth_agent_id });
     while (existingAgentId) {
       // Try with incremented sequence
       sequence++;
-      booth_agent_id = `${phoneNumber}-${String(sequence).padStart(3, "0")}`;
+      booth_agent_id = `${boothIdentifier}-${sequence}`;
       existingAgentId = await User.findOne({ booth_agent_id });
     }
+    
+    console.log(`Generated booth_agent_id: ${booth_agent_id} for booth ${boothIdentifier} (${existingAgentsCount} existing agents)`);
 
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
@@ -447,8 +526,8 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       assignedAC: aciIdNum,
       aci_id: aciIdNum,
       aci_name: aci_name || booth.ac_name,
-      assignedBoothId: booth_id,
-      booth_id: booth.booth_id || booth_id,
+      assignedBoothId: booth_id, // Store the booth ObjectId reference
+      booth_id: booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`, // Store the booth identifier string
       booth_agent_id,
       status: "Active",
       createdBy: req.user._id,
@@ -659,42 +738,59 @@ router.get("/booths", isAuthenticated, canManageBooths, validateACAccess, async 
  */
 router.post("/booths", isAuthenticated, canManageBooths, validateACAccess, async (req, res) => {
   try {
-    const { boothNumber, boothName, boothCode, acId, acName, address, totalVoters } = req.body;
+    // Support both acId/acName and ac_id/ac_name for backward compatibility
+    const { boothName, boothCode, acId, acName, ac_id, ac_name, address, totalVoters } = req.body;
+    
+    // Normalize field names
+    const normalizedAcId = parseInt(acId || ac_id);
+    const normalizedAcName = acName || ac_name;
 
     // Validate required fields
-    if (!boothNumber || !boothName || !acId || !acName) {
+    if (!boothName || !normalizedAcId || !normalizedAcName) {
       return res.status(400).json({
         success: false,
-        message: "boothNumber, boothName, acId, and acName are required",
+        message: "Booth name, AC ID, and AC name are required",
       });
     }
 
     // Check AC access
-    if (!canAccessAC(req.user, acId)) {
+    if (!canAccessAC(req.user, normalizedAcId)) {
       return res.status(403).json({
         success: false,
         message: "You can only create booths in your assigned AC",
       });
     }
 
+    // Auto-generate booth number: find the max booth number for this AC and increment by 1
+    const maxBooth = await Booth.findOne({ ac_id: normalizedAcId, isActive: true })
+      .sort({ boothNumber: -1 })
+      .select("boothNumber")
+      .lean();
+
+    const nextBoothNumber = maxBooth ? maxBooth.boothNumber + 1 : 1;
+    console.log(`Auto-generated booth number for AC ${normalizedAcId}: ${nextBoothNumber}`);
+
+    // Generate booth_id in format: BOOTH<number>-<AC number>
+    const boothIdentifier = boothCode || `BOOTH${nextBoothNumber}-${normalizedAcId}`;
+    console.log("Generated booth_id:", boothIdentifier);
+
     // Check if booth code already exists
-    if (boothCode) {
-      const existingBooth = await Booth.findOne({ boothCode, isActive: true });
-      if (existingBooth) {
-        return res.status(409).json({
-          success: false,
-          message: "Booth with this code already exists",
-        });
-      }
+    const existingBooth = await Booth.findOne({ boothCode: boothIdentifier, isActive: true });
+    if (existingBooth) {
+      return res.status(409).json({
+        success: false,
+        message: "Booth with this code already exists",
+      });
     }
 
     // Create booth
     const newBooth = new Booth({
-      boothNumber,
+      boothNumber: nextBoothNumber,
       boothName,
-      boothCode: boothCode || `AC${acId}-B${boothNumber}`,
-      ac_id: acId,
-      ac_name: acName,
+      boothCode: boothIdentifier,
+      booth_id: boothIdentifier,
+      ac_id: normalizedAcId,
+      ac_name: normalizedAcName,
       address,
       totalVoters: totalVoters || 0,
       createdBy: req.user._id,
@@ -1275,61 +1371,79 @@ router.get("/booths", isAuthenticated, async (req, res) => {
  */
 router.post("/booths", isAuthenticated, async (req, res) => {
   try {
-    const { boothNumber, boothName, boothCode, ac_id, ac_name, address, totalVoters } = req.body;
+    const { boothName, boothCode, ac_id, ac_name, address, totalVoters } = req.body;
 
     console.log("=== Booth Creation Request ===");
     console.log("Request body:", req.body);
     console.log("User:", req.user);
 
     // Validate permissions
-    if (req.user.role !== "L0" && req.user.role !== "L1") {
+    if (req.user.role !== "L0" && req.user.role !== "L1" && req.user.role !== "L2") {
       console.log("Permission denied: User role is", req.user.role);
       return res.status(403).json({
         success: false,
-        message: "Only Super Admin and ACIM can create booths",
+        message: "Only Super Admin, ACIM, and ACI can create booths",
       });
     }
 
     // Validate required fields
-    if (!boothNumber || !boothName || !ac_id || !ac_name) {
-      console.log("Missing required fields:", { boothNumber, boothName, ac_id, ac_name });
+    if (!boothName || !ac_id || !ac_name) {
+      console.log("Missing required fields:", { boothName, ac_id, ac_name });
       return res.status(400).json({
         success: false,
-        message: "Booth number, name, AC ID, and AC name are required",
+        message: "Booth name, AC ID, and AC name are required",
       });
     }
 
+    const normalizedAcId = parseInt(ac_id);
+
     // L1 users can only create booths in their AC
-    if (req.user.role === "L1" && parseInt(ac_id) !== req.user.assignedAC) {
-      console.log(`AC mismatch: User AC ${req.user.assignedAC}, Booth AC ${ac_id}`);
+    if (req.user.role === "L1" && normalizedAcId !== req.user.assignedAC) {
+      console.log(`AC mismatch: User AC ${req.user.assignedAC}, Booth AC ${normalizedAcId}`);
       return res.status(403).json({
         success: false,
         message: "You can only create booths in your assigned AC",
       });
     }
 
-    // Check if booth code already exists
-    if (boothCode) {
-      const existingBooth = await Booth.findOne({ boothCode });
-      if (existingBooth) {
-        console.log("Booth code already exists:", boothCode);
-        return res.status(409).json({
-          success: false,
-          message: "Booth code already exists",
-        });
-      }
+    // L2 users can only create booths in their AC
+    if (req.user.role === "L2" && normalizedAcId !== req.user.assignedAC) {
+      console.log(`AC mismatch: User AC ${req.user.assignedAC}, Booth AC ${normalizedAcId}`);
+      return res.status(403).json({
+        success: false,
+        message: "You can only create booths in your assigned AC",
+      });
     }
 
-    // Generate booth_id
-    const booth_id = boothCode || `AC${ac_id}-B${String(boothNumber).padStart(3, "0")}`;
+    // Auto-generate booth number: find the max booth number for this AC and increment by 1
+    const maxBooth = await Booth.findOne({ ac_id: normalizedAcId, isActive: true })
+      .sort({ boothNumber: -1 })
+      .select("boothNumber")
+      .lean();
+
+    const nextBoothNumber = maxBooth ? maxBooth.boothNumber + 1 : 1;
+    console.log(`Auto-generated booth number for AC ${normalizedAcId}: ${nextBoothNumber}`);
+
+    // Generate booth_id in format: BOOTH<number>-<AC number>
+    const booth_id = boothCode || `BOOTH${nextBoothNumber}-${normalizedAcId}`;
     console.log("Generated booth_id:", booth_id);
 
+    // Check if booth code already exists
+    const existingBooth = await Booth.findOne({ boothCode: booth_id });
+    if (existingBooth) {
+      console.log("Booth code already exists:", booth_id);
+      return res.status(409).json({
+        success: false,
+        message: "Booth code already exists",
+      });
+    }
+
     const newBooth = new Booth({
-      boothNumber: parseInt(boothNumber),
+      boothNumber: nextBoothNumber,
       boothName,
       boothCode: booth_id,
       booth_id,
-      ac_id: parseInt(ac_id),
+      ac_id: normalizedAcId,
       ac_name,
       address,
       totalVoters: totalVoters || 0,

@@ -60,6 +60,13 @@ const roleLabels = {
   L9: 'War Room Command',
 };
 
+const dashboardTitles = {
+  L0: 'System Dashboard',
+  L1: 'ACIM Dashboard',
+  L2: 'ACI Dashboard',
+  L9: 'War Room Command',
+};
+
 const AppSidebar = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -146,7 +153,9 @@ const AppSidebar = () => {
         <div className="flex items-center justify-between p-4">
           {!isCollapsed && (
             <div className="flex-1 min-w-0">
-              <h1 className="text-xl font-bold text-primary truncate">AC Dashboard</h1>
+              <h1 className="text-xl font-bold text-primary truncate">
+                {dashboardTitles[user?.role as keyof typeof dashboardTitles] || 'Dashboard'}
+              </h1>
               <p className="text-xs text-muted-foreground mt-1 truncate">Management System</p>
             </div>
           )}

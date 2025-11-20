@@ -61,7 +61,6 @@ export const BoothManagement = () => {
   
   // Form states
   const [newBooth, setNewBooth] = useState({
-    boothNumber: '',
     boothName: '',
     acId: getDefaultAcId(),
     acName: getDefaultAcName(),
@@ -120,10 +119,10 @@ export const BoothManagement = () => {
   };
 
   const handleCreateBooth = async () => {
-    if (!newBooth.boothNumber || !newBooth.boothName) {
+    if (!newBooth.boothName) {
       toast({
         title: 'Error',
-        description: 'Booth number and name are required.',
+        description: 'Booth name is required.',
         variant: 'destructive',
       });
       return;
@@ -149,10 +148,9 @@ export const BoothManagement = () => {
       console.log('Creating booth with data:', newBooth);
       
       const response = await api.post('/rbac/booths', {
-        boothNumber: parseInt(newBooth.boothNumber, 10),
         boothName: newBooth.boothName.trim(),
-        acId: normalizedAcId,
-        acName: resolvedAcName,
+        ac_id: normalizedAcId,
+        ac_name: resolvedAcName,
         address: newBooth.address?.trim() || undefined,
         totalVoters: Number(newBooth.totalVoters) || 0,
       });
@@ -169,7 +167,6 @@ export const BoothManagement = () => {
       
       // Reset form and close dialog
       setNewBooth({
-        boothNumber: '',
         boothName: '',
         acId: getDefaultAcId(),
         acName: getDefaultAcName(),
@@ -300,16 +297,6 @@ export const BoothManagement = () => {
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="boothNumber">Booth Number <span className="text-destructive">*</span></Label>
-                  <Input 
-                    id="boothNumber" 
-                    type="number"
-                    placeholder="e.g., 1" 
-                    value={newBooth.boothNumber}
-                    onChange={(e) => setNewBooth({...newBooth, boothNumber: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
                   <Label htmlFor="boothName">Booth Name <span className="text-destructive">*</span></Label>
                   <Input 
                     id="boothName" 
@@ -317,6 +304,9 @@ export const BoothManagement = () => {
                     value={newBooth.boothName}
                     onChange={(e) => setNewBooth({...newBooth, boothName: e.target.value})}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Booth number will be auto-generated based on existing booths in this AC
+                  </p>
                 </div>
                 {user?.role !== 'L2' && (
                   <div className="space-y-2">
