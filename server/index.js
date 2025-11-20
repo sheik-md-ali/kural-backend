@@ -130,6 +130,17 @@ app.use(
 app.use((req, res, next) => {
   if (req.session && req.session.user) {
     req.user = req.session.user;
+    console.log('Session restored - User:', {
+      id: req.user.id || req.user._id,
+      role: req.user.role,
+      sessionId: req.sessionID
+    });
+  } else {
+    console.log('No user in session:', {
+      hasSession: !!req.session,
+      sessionId: req.sessionID,
+      cookies: req.headers.cookie
+    });
   }
   next();
 });
@@ -146,6 +157,8 @@ const roleMap = new Map([
   ["AssemblyCI", "L2"],
   ["CI", "L2"],
   ["L2", "L2"],
+  ["Booth Agent", "BoothAgent"],
+  ["BoothAgent", "BoothAgent"],
   ["War Room", "L9"],
   ["Command", "L9"],
   ["L9", "L9"],

@@ -28,7 +28,19 @@ const toNumericAcId = (value) => {
  * Middleware to check if user is authenticated
  */
 export const isAuthenticated = (req, res, next) => {
+  // Try to restore user from session if not already set
+  if (!req.user && req.session && req.session.user) {
+    req.user = req.session.user;
+  }
+  
   if (!req.user || !req.user._id) {
+    console.warn("Authentication failed:", {
+      hasUser: !!req.user,
+      hasSession: !!req.session,
+      hasSessionUser: !!(req.session && req.session.user),
+      sessionId: req.sessionID,
+      cookies: req.headers.cookie,
+    });
     return res.status(401).json({
       success: false,
       message: "Authentication required. Please log in.",
