@@ -18,6 +18,8 @@ import MasterQuestion from "./models/MasterQuestion.js";
 import SurveyMasterDataMapping from "./models/SurveyMasterDataMapping.js";
 import MappedField from "./models/MappedField.js";
 import MobileAppQuestion from "./models/MobileAppQuestion.js";
+import MobileAppResponse from "./models/MobileAppResponse.js";
+import MobileAppAnswer from "./models/MobileAppAnswer.js";
 
 // Import RBAC routes
 import rbacRoutes from "./routes/rbac.js";
@@ -2632,6 +2634,615 @@ app.delete("/api/mobile-app-questions/:questionId", async (req, res) => {
     console.error("Error deleting mobile app question:", error);
     return res.status(500).json({
       message: "Failed to delete question",
+      error: error.message,
+    });
+  }
+});
+
+function getNestedValue(source, path) {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+  return path
+    .split(".")
+    .reduce(
+      (acc, key) =>
+        acc !== undefined && acc !== null && typeof acc === "object"
+          ? acc[key]
+          : undefined,
+      source,
+    );
+}
+
+function pickFirstValue(source, paths, fallback = undefined) {
+  for (const path of paths) {
+    const value = getNestedValue(source, path);
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function normalizeAnswerEntry(entry, index) {
+  if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+    const questionId =
+      entry.questionId ??
+      entry.question_id ??
+      entry.masterQuestionId ??
+      entry.mobileQuestionId ??
+      entry.id ??
+      entry.key;
+
+    const prompt =
+      entry.prompt ??
+      entry.question ??
+      entry.label ??
+      entry.title ??
+      entry.fieldLabel ??
+      entry.text ??
+      entry.name;
+
+    const value =
+      entry.answer ??
+      entry.value ??
+      entry.response ??
+      entry.selectedOptions ??
+      entry.selectedOption ??
+      entry.choices ??
+      entry.data ??
+      entry.content ??
+      entry.values ??
+      entry.text ??
+      entry;
+
+    return {
+      id: questionId ? String(questionId) : `answer-${index}`,
+      questionId: questionId ? String(questionId) : undefined,
+      prompt: prompt || questionId || `Question ${index + 1}`,
+      type: entry.type ?? entry.questionType,
+      isRequired: typeof entry.isRequired === "boolean" ? entry.isRequired : Boolean(entry.required),
+      value,
+      raw: entry,
+    };
+  }
+
+  return {
+    id: `answer-${index}`,
+    questionId: undefined,
+    prompt: `Question ${index + 1}`,
+    value: entry,
+    raw: entry,
+  };
+}
+
+function normalizeAnswerEntries(rawAnswers) {
+  if (!rawAnswers) {
+    return [];
+  }
+
+  if (Array.isArray(rawAnswers)) {
+    return rawAnswers.map((entry, index) => normalizeAnswerEntry(entry, index));
+  }
+
+  if (typeof rawAnswers === "object") {
+    return Object.entries(rawAnswers).map(([key, value], index) => ({
+      id: key,
+      questionId: key,
+      prompt: key,
+      value,
+      raw: value,
+    }));
+  }
+
+  return [];
+}
+
+function safeDateToISOString(value) {
+  if (!value) {
+    return null;
+  }
+
+  let parsed;
+  if (value instanceof Date) {
+    parsed = value;
+  } else if (typeof value === "number") {
+    parsed = new Date(value);
+  } else if (typeof value === "string") {
+    const numeric = Number(value);
+    parsed = Number.isFinite(numeric) && value.trim() === String(numeric)
+      ? new Date(numeric)
+      : new Date(value);
+  }
+
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
+}
+
+function formatMobileAppResponse(responseDoc) {
+  if (!responseDoc) {
+    return null;
+  }
+
+  const response =
+    typeof responseDoc.toObject === "function"
+      ? responseDoc.toObject({ versionKey: false })
+      : responseDoc;
+
+  const respondentName = pickFirstValue(response, [
+    "respondentName",
+    "respondent_name",
+    "name",
+    "fullName",
+    "applicantName",
+    "profile.name",
+    "basicDetails.name",
+    "metadata.respondentName",
+  ]);
+
+  const phoneNumber = pickFirstValue(response, [
+    "phoneNumber",
+    "phone_number",
+    "phone",
+    "mobile",
+    "mobileNumber",
+    "contactNumber",
+    "basicDetails.phone",
+    "metadata.phoneNumber",
+  ]);
+
+  const voterId = pickFirstValue(response, [
+    "voterId",
+    "voter_id",
+    "voterID",
+    "voterNumber",
+    "voter_id_number",
+  ]);
+
+  const submittedAt = safeDateToISOString(
+    pickFirstValue(response, [
+      "submittedAt",
+      "submitted_at",
+      "submittedOn",
+      "submitted_on",
+      "createdAt",
+      "created_at",
+      "timestamp",
+      "meta.submittedAt",
+      "meta.createdAt",
+    ]),
+  );
+
+  const status = pickFirstValue(response, [
+    "status",
+    "syncStatus",
+    "submissionStatus",
+    "state",
+  ]);
+
+  const metadata = {};
+  const metadataMappings = [
+    ["formId", ["formId", "form_id", "surveyId", "form.id"]],
+    ["aciName", ["aciName", "aci_name", "acName", "ac_name"]],
+    ["acNumber", ["aciNumber", "aci_num", "acNumber", "ac_no"]],
+    ["booth", ["booth", "boothNumber", "booth_no", "boothName"]],
+    ["ward", ["ward", "wardNumber", "ward_no"]],
+    ["location", ["location", "village", "town", "district", "address", "geo.location"]],
+    ["agent", ["agentName", "agent", "agent_id", "fieldAgent", "collectedBy"]],
+    ["deviceId", ["deviceId", "device_id"]],
+    ["appVersion", ["appVersion", "app_version"]],
+  ];
+
+  metadataMappings.forEach(([key, paths]) => {
+    const value = pickFirstValue(response, paths);
+    if (value !== undefined && value !== null && value !== "") {
+      metadata[key] = value;
+    }
+  });
+
+  const answersSource = pickFirstValue(response, [
+    "answers",
+    "responses",
+    "response.answers",
+    "response",
+    "payload.answers",
+    "payload.responses",
+    "form.answers",
+    "form.responses",
+    "data.answers",
+    "data.responses",
+  ]);
+
+  const answers = normalizeAnswerEntries(answersSource);
+
+  return {
+    id: response._id?.toString?.() ?? response.id ?? undefined,
+    respondentName: respondentName ?? null,
+    phoneNumber: phoneNumber ?? null,
+    voterId: voterId ?? null,
+    status: status ?? null,
+    submittedAt,
+    metadata: Object.keys(metadata).length ? metadata : undefined,
+    answers,
+    raw: response,
+  };
+}
+
+function parseMobileAppResponseOptions(query) {
+  const { limit = "25", cursor, search } = query ?? {};
+  const parsedLimit = Number.parseInt(limit, 10);
+  const effectiveLimit = Number.isFinite(parsedLimit)
+    ? Math.min(Math.max(parsedLimit, 1), 200)
+    : 25;
+
+  return {
+    limit: effectiveLimit,
+    cursor: typeof cursor === "string" && cursor.trim() ? cursor.trim() : null,
+    search: typeof search === "string" && search.trim() ? search.trim() : null,
+  };
+}
+
+function buildSearchQuery(search) {
+  if (!search) {
+    return {};
+  }
+
+  const regex = new RegExp(escapeRegExp(search), "i");
+  const searchableFields = [
+    "respondentName",
+    "respondent_name",
+    "name",
+    "fullName",
+    "phone",
+    "phoneNumber",
+    "mobile",
+    "mobileNumber",
+    "voterId",
+    "voter_id",
+    "aciName",
+    "aci_name",
+    "booth",
+    "boothNumber",
+  ];
+
+  return {
+    $or: searchableFields.map((field) => ({ [field]: regex })),
+  };
+}
+
+async function fetchDirectMobileAppResponses({ limit, cursor, search }) {
+  const searchQuery = buildSearchQuery(search);
+
+  const paginatedQuery = { ...searchQuery };
+  if (typeof cursor === "string" && mongoose.Types.ObjectId.isValid(cursor)) {
+    paginatedQuery._id = { $lt: new mongoose.Types.ObjectId(cursor) };
+  }
+
+  const [responses, totalCount] = await Promise.all([
+    MobileAppResponse.find(paginatedQuery)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit + 1),
+    MobileAppResponse.countDocuments(searchQuery.$or ? { $or: searchQuery.$or } : {}),
+  ]);
+
+  const hasMore = responses.length > limit;
+  const items = hasMore ? responses.slice(0, limit) : responses;
+  const nextCursor = hasMore ? items[items.length - 1]._id?.toString?.() ?? null : null;
+
+  return {
+    responses: items.map((response) => formatMobileAppResponse(response)),
+    pagination: {
+      limit,
+      hasMore,
+      nextCursor,
+    },
+    total: totalCount,
+  };
+}
+
+function isNamespaceMissingError(error) {
+  return (
+    error?.codeName === "NamespaceNotFound" ||
+    error?.message?.toLowerCase?.().includes("ns not found")
+  );
+}
+
+function normalizeAnswerValue(answerDoc) {
+  if (answerDoc === null || answerDoc === undefined) {
+    return null;
+  }
+  if (typeof answerDoc === "object" && Object.keys(answerDoc).length === 0) {
+    return null;
+  }
+  return answerDoc;
+}
+
+function buildAnswerGroupKey(answer) {
+  const explicitId =
+    answer.submissionId ??
+    answer.responseId ??
+    answer.mobileSubmissionId ??
+    answer.formResponseId ??
+    answer.formSubmissionId;
+
+  if (explicitId) {
+    return explicitId.toString();
+  }
+
+  const submittedBy = answer.submittedBy?.toString?.() ?? "";
+  const voterId = answer.voterId?.toString?.() ?? "";
+  const boothId = answer.boothId ?? answer.booth ?? "";
+  const formId =
+    answer.formId ??
+    answer.form_id ??
+    answer.surveyId ??
+    answer.survey_id ??
+    answer.masterQuestionnaireId ??
+    "";
+  const submittedAt = safeDateToISOString(
+    answer.submittedAt ?? answer.syncedAt ?? answer.updatedAt ?? answer.createdAt,
+  );
+
+  const fallbackKey = [submittedBy, voterId, boothId, formId, submittedAt ?? ""]
+    .filter((part) => String(part || "").length > 0)
+    .join("|");
+
+  if (fallbackKey) {
+    return fallbackKey;
+  }
+
+  return answer._id?.toString?.() ?? `submission-${Math.random().toString(36).slice(2)}`;
+}
+
+function buildMetadataFromAnswer(answer) {
+  const metadata = {};
+  const mappings = [
+    ["formId", ["formId", "form_id", "surveyId", "survey_id", "formName"]],
+    ["booth", ["boothId", "booth", "boothNumber", "booth_name"]],
+    ["acId", ["acId", "aciId", "aci_id", "ac_id"]],
+    ["agent", ["submittedByName", "agentName", "fieldAgent"]],
+    ["device", ["deviceInfo.deviceName", "deviceInfo.model", "deviceInfo.osVersion"]],
+    ["location", ["location", "village", "town", "district"]],
+  ];
+
+  mappings.forEach(([key, paths]) => {
+    const value = pickFirstValue(answer, paths);
+    if (value !== undefined && value !== null && value !== "") {
+      metadata[key] = value;
+    }
+  });
+
+  return Object.keys(metadata).length ? metadata : undefined;
+}
+
+function formatAnswerFromDocument(answer, questionLookup, index) {
+  const questionId = answer.questionId?.toString?.() ?? answer.question_id?.toString?.();
+  const question =
+    (questionId && questionLookup.get(questionId)) ||
+    (answer.masterQuestionId && questionLookup.get(answer.masterQuestionId?.toString?.())) ||
+    null;
+
+  const prompt =
+    answer.questionPrompt ??
+    answer.prompt ??
+    answer.question ??
+    question?.prompt ??
+    answer.answerLabel ??
+    `Question ${index + 1}`;
+
+  const value =
+    normalizeAnswerValue(
+      answer.answerValue ??
+        answer.answer ??
+        answer.selectedOption ??
+        answer.selectedOptions ??
+        answer.answerLabel ??
+        answer.value,
+    ) ?? null;
+
+  return {
+    id: `${questionId || answer._id?.toString?.() || `answer-${index}`}`,
+    questionId,
+    prompt,
+    type: question?.type,
+    isRequired: Boolean(question?.isRequired),
+    value,
+    raw: {
+      questionId,
+      masterQuestionId: answer.masterQuestionId,
+      selectedOptionId: answer.selectedOptionId,
+      answerValue: answer.answerValue,
+      answerLabel: answer.answerLabel,
+    },
+  };
+}
+
+function buildAnswerSearchQuery(search) {
+  if (!search) {
+    return {};
+  }
+
+  const regex = new RegExp(escapeRegExp(search), "i");
+  const orConditions = [
+    { respondentName: regex },
+    { submittedByName: regex },
+    { boothId: regex },
+    { booth: regex },
+    { answerLabel: regex },
+    { answerValue: regex },
+    { formId: regex },
+    { form_id: regex },
+  ];
+
+  if (/^[a-f0-9]{24}$/i.test(search)) {
+    const objectId = new mongoose.Types.ObjectId(search);
+    orConditions.push({ _id: objectId });
+    orConditions.push({ voterId: objectId });
+    orConditions.push({ questionId: objectId });
+    orConditions.push({ masterQuestionId: objectId });
+    orConditions.push({ submittedBy: objectId });
+  }
+
+  const numericSearch = Number(search);
+  if (!Number.isNaN(numericSearch)) {
+    orConditions.push({ acId: numericSearch });
+    orConditions.push({ aciId: numericSearch });
+  }
+
+  return { $or: orConditions };
+}
+
+async function fetchAggregatedMobileAppResponses({ limit, cursor, search }) {
+  const matchQuery = buildAnswerSearchQuery(search);
+  const fetchSize = Math.min(Math.max(limit * 25, 250), 5000);
+
+  const answers = await MobileAppAnswer.find(matchQuery)
+    .sort({ submittedAt: -1, createdAt: -1, _id: -1 })
+    .limit(fetchSize)
+    .lean();
+
+  if (answers.length === 0) {
+    return {
+      responses: [],
+      pagination: {
+        limit,
+        hasMore: false,
+        nextCursor: null,
+      },
+      total: 0,
+    };
+  }
+
+  const questionIds = Array.from(
+    new Set(
+      answers
+        .map((answer) => answer.questionId?.toString?.())
+        .filter((id) => typeof id === "string"),
+    ),
+  );
+
+  const masterQuestionIds = Array.from(
+    new Set(
+      answers
+        .map((answer) => answer.masterQuestionId?.toString?.())
+        .filter((id) => typeof id === "string"),
+    ),
+  );
+
+  const questions = await MobileAppQuestion.find({
+    _id: { $in: questionIds },
+  })
+    .select(["prompt", "type", "isRequired"])
+    .lean();
+
+  const masterQuestions = masterQuestionIds.length
+    ? await MasterQuestion.find({ _id: { $in: masterQuestionIds } })
+        .select(["prompt", "type", "isRequired"])
+        .lean()
+    : [];
+
+  const questionLookup = new Map(
+    [...questions, ...masterQuestions].map((question) => [
+      question._id?.toString?.(),
+      question,
+    ]),
+  );
+
+  const grouped = new Map();
+
+  answers.forEach((answer) => {
+    const groupKey = buildAnswerGroupKey(answer);
+    if (!grouped.has(groupKey)) {
+      const submittedDate =
+        answer.submittedAt ?? answer.syncedAt ?? answer.updatedAt ?? answer.createdAt;
+      const submittedAtIso = safeDateToISOString(submittedDate);
+      grouped.set(groupKey, {
+        id: groupKey,
+        respondentName:
+          answer.respondentName ??
+          answer.submittedByName ??
+          answer.applicantName ??
+          answer.voterName ??
+          null,
+        phoneNumber:
+          answer.phoneNumber ??
+          answer.mobileNumber ??
+          answer.applicantPhone ??
+          answer.contactNumber ??
+          null,
+        voterId: answer.voterId?.toString?.() ?? answer.voter_id ?? null,
+        status: answer.status ?? answer.syncStatus ?? "Submitted",
+        submittedAt: submittedAtIso,
+        sortTimestamp: submittedDate ? new Date(submittedDate).getTime() : 0,
+        metadata: buildMetadataFromAnswer(answer),
+        answers: [],
+      });
+    }
+    const group = grouped.get(groupKey);
+    group.answers.push(formatAnswerFromDocument(answer, questionLookup, group.answers.length));
+  });
+
+  const sortedResponses = Array.from(grouped.values()).sort((a, b) => {
+    if (b.sortTimestamp !== a.sortTimestamp) {
+      return b.sortTimestamp - a.sortTimestamp;
+    }
+    return b.id.localeCompare(a.id);
+  });
+
+  let startIndex = 0;
+  if (cursor) {
+    const cursorIndex = sortedResponses.findIndex((resp) => resp.id === cursor);
+    if (cursorIndex >= 0) {
+      startIndex = cursorIndex + 1;
+    }
+  }
+
+  const items = sortedResponses.slice(startIndex, startIndex + limit);
+  const hasMore = startIndex + limit < sortedResponses.length;
+  const nextCursor = hasMore ? items[items.length - 1]?.id ?? null : null;
+
+  return {
+    responses: items.map(({ sortTimestamp, ...rest }) => rest),
+    pagination: {
+      limit,
+      hasMore,
+      nextCursor,
+    },
+    total: sortedResponses.length,
+  };
+}
+
+app.get("/api/mobile-app-responses", async (req, res) => {
+  try {
+    await connectToDatabase();
+    const options = parseMobileAppResponseOptions(req.query);
+
+    let directResult = null;
+    try {
+      directResult = await fetchDirectMobileAppResponses(options);
+    } catch (error) {
+      if (!isNamespaceMissingError(error)) {
+        throw error;
+      }
+    }
+
+    if (directResult && directResult.total > 0) {
+      return res.json(directResult);
+    }
+
+    const aggregatedResult = await fetchAggregatedMobileAppResponses(options);
+    if (aggregatedResult.total > 0 || !directResult) {
+      return res.json(aggregatedResult);
+    }
+
+    return res.json(directResult);
+  } catch (error) {
+    console.error("Error fetching mobile app responses:", error);
+    return res.status(500).json({
+      message: "Failed to fetch mobile app responses",
       error: error.message,
     });
   }

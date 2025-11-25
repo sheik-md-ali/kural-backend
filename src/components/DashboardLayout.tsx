@@ -33,6 +33,7 @@ import {
   ClipboardList,
   Layers,
   Smartphone,
+  Inbox,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Separator } from './ui/separator';
@@ -84,12 +85,12 @@ const AppSidebar = () => {
         return [
           { icon: LayoutDashboard, label: 'System Dashboard', path: '/l0/dashboard' },
           { icon: Users, label: 'User Management', path: '/l0/users' },
-          { icon: Users, label: 'Voter Data', path: '/l0/voters' },
           { icon: Database, label: 'Voter Field Manager', path: '/l0/voter-fields' },
           { icon: Layers, label: 'Master Data', path: '/l0/master-data' },
           { icon: FileText, label: 'Survey Forms', path: '/l0/surveys' },
           { icon: ClipboardList, label: 'Survey Responses', path: '/l0/survey-responses' },
           { icon: Smartphone, label: 'Mobile App Question', path: '/l0/mobile-app-questions' },
+          { icon: Inbox, label: 'Mobile App Responses', path: '/l0/mobile-app-responses' },
           { icon: Home, label: 'Booth Management', path: '/shared/booth-management' },
           { icon: UserCircle, label: 'Booth Agent Management', path: '/shared/booth-agent-management' },
           { icon: ScrollText, label: 'Activity Logs', path: '/l0/activity-logs' },
