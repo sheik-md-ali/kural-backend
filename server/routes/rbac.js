@@ -893,7 +893,7 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
 router.put("/users/:userId", isAuthenticated, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { name, email, phone, password, role, assignedAC, aci_name, assignedBoothId, status, isActive } = req.body;
+    const { name, fullName, email, phone, phoneNumber, password, role, assignedAC, aci_name, assignedBoothId, booth_id, status, isActive } = req.body;
 
     const user = await User.findById(userId);
     if (!user) {
@@ -911,7 +911,24 @@ router.put("/users/:userId", isAuthenticated, async (req, res) => {
           success: false,
           message: "You can only update users you created",
         });
-      } else if (req.user.role !== "L1") {
+      }
+      // L2 can update booth agents in their AC
+      else if (req.user.role === "L2") {
+        // L2 can only update booth agents (not other user types)
+        if (user.role !== "Booth Agent" && user.role !== "BoothAgent") {
+          return res.status(403).json({
+            success: false,
+            message: "ACI can only update booth agents",
+          });
+        }
+        // L2 can only update agents in their assigned AC
+        if (user.assignedAC !== req.user.assignedAC) {
+          return res.status(403).json({
+            success: false,
+            message: "You can only update booth agents in your assigned AC",
+          });
+        }
+      } else if (req.user.role !== "L1" && req.user.role !== "L2") {
         return res.status(403).json({
           success: false,
           message: "You don't have permission to update users",
@@ -919,14 +936,15 @@ router.put("/users/:userId", isAuthenticated, async (req, res) => {
       }
     }
 
-    // Update fields
-    if (name) user.name = name;
+    // Update fields (support both naming conventions)
+    if (name || fullName) user.name = name || fullName;
     if (email) user.email = email;
-    if (phone) user.phone = phone;
+    if (phone || phoneNumber) user.phone = phone || phoneNumber;
     if (role && req.user.role === "L0") user.role = role; // Only L0 can change roles
     if (assignedAC !== undefined) user.assignedAC = assignedAC;
     if (aci_name) user.aci_name = aci_name;
     if (assignedBoothId !== undefined) user.assignedBoothId = assignedBoothId;
+    if (booth_id !== undefined) user.booth_id = booth_id;
     if (status) user.status = status;
     if (isActive !== undefined && req.user.role === "L0") user.isActive = isActive;
 
@@ -1035,11 +1053,14 @@ router.delete("/users/:userId", isAuthenticated, async (req, res) => {
 /**
  * GET /api/rbac/booths
  * Get booths (filtered by AC for L1/L2)
+ * Aggregates booth data from voter documents and merges with any existing booths in collection
  * Access: L0, L1, L2
  */
 router.get("/booths", isAuthenticated, canManageBooths, validateACAccess, async (req, res) => {
   try {
-    const { ac, search } = req.query;
+    const { ac, search, source, page = 1, limit = 50 } = req.query;
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 50;
 
     let query = { isActive: true };
 
@@ -1058,22 +1079,195 @@ router.get("/booths", isAuthenticated, canManageBooths, validateACAccess, async 
       query.ac_id = acId;
     }
 
-    // Search by booth name or code
-    if (search) {
-      const searchRegex = new RegExp(search, "i");
-      query.$or = [{ boothName: searchRegex }, { boothCode: searchRegex }];
+    // Determine the target AC for voter data aggregation
+    const targetAC = query.ac_id || req.user.assignedAC;
+
+    // If source=collection, only return booths from collection (for backwards compatibility)
+    if (source === "collection") {
+      if (search) {
+        const searchRegex = new RegExp(search, "i");
+        query.$or = [{ boothName: searchRegex }, { boothCode: searchRegex }];
+      }
+
+      const booths = await Booth.find(query)
+        .populate("assignedAgents", "name phone role")
+        .populate("primaryAgent", "name phone role")
+        .populate("createdBy", "name role")
+        .sort({ boothNumber: 1 });
+
+      return res.json({
+        success: true,
+        count: booths.length,
+        booths,
+      });
     }
 
-    const booths = await Booth.find(query)
-      .populate("assignedAgents", "name phone role")
-      .populate("primaryAgent", "name phone role")
-      .populate("createdBy", "name role")
-      .sort({ boothNumber: 1 });
+    // For L1/L2 users with a specific AC, aggregate booth data from voter documents
+    // This provides a complete view of all booths based on actual voter data
+    let booths = [];
+
+    if (targetAC) {
+      try {
+        // Aggregate booth data from voter documents
+        // booth_id is the unique identifier (e.g., BOOTH1-111, BOOTH2-111, etc.)
+        // Each booth_id has ~100 voters
+        const voterBooths = await aggregateVoters(targetAC, [
+          { $match: {} },
+          {
+            $group: {
+              _id: "$booth_id",
+              boothno: { $first: "$boothno" },
+              boothname: { $first: "$boothname" },
+              totalVoters: { $sum: 1 }
+            }
+          },
+          { $sort: { "boothno": 1 } }
+        ]);
+
+        // Fetch existing booths from collection to merge metadata
+        const existingBooths = await Booth.find({ ac_id: targetAC, isActive: true })
+          .populate("assignedAgents", "name phone role")
+          .populate("primaryAgent", "name phone role")
+          .populate("createdBy", "name role");
+
+        // Create a map of existing booths by their booth code
+        const existingBoothMap = {};
+        existingBooths.forEach(booth => {
+          existingBoothMap[booth.boothCode] = booth;
+          if (booth.booth_id) existingBoothMap[booth.booth_id] = booth;
+        });
+
+        // Get assigned agents for each booth from users collection
+        const boothAgentMap = {};
+        const boothAgents = await User.find({
+          role: { $in: ["Booth Agent", "BoothAgent"] },
+          assignedAC: targetAC,
+          deleted: { $ne: true }
+        }).select("name phone role booth_id assignedBoothId booth_agent_id");
+
+        boothAgents.forEach(agent => {
+          // Try to determine the booth ID in this priority:
+          // 1. booth_id if it's in BOOTH format (e.g., "BOOTH1-111")
+          // 2. Extract from booth_agent_id (e.g., "BOOTH1-111-2" -> "BOOTH1-111")
+          // 3. Fall back to booth_id or assignedBoothId as-is
+          let boothId = null;
+
+          // Check if booth_id is in the correct format (starts with BOOTH)
+          if (agent.booth_id && agent.booth_id.toString().startsWith("BOOTH")) {
+            boothId = agent.booth_id;
+          }
+          // Try to extract from booth_agent_id (format: "BOOTH1-111-2")
+          else if (agent.booth_agent_id) {
+            const match = agent.booth_agent_id.match(/^(BOOTH\d+-\d+)/);
+            if (match) {
+              boothId = match[1];
+            }
+          }
+          // Fall back to booth_id or assignedBoothId
+          if (!boothId) {
+            boothId = agent.booth_id || (agent.assignedBoothId ? agent.assignedBoothId.toString() : null);
+          }
+
+          if (boothId) {
+            if (!boothAgentMap[boothId]) {
+              boothAgentMap[boothId] = [];
+            }
+            boothAgentMap[boothId].push({
+              _id: agent._id,
+              name: agent.name,
+              phone: agent.phone,
+              role: agent.role
+            });
+          }
+        });
+
+        // Transform voter data into booth format, merging with existing booth data
+        booths = voterBooths.map((vb, index) => {
+          const boothId = vb._id; // e.g., "BOOTH1-111"
+          const boothNumber = vb.boothno || index + 1;
+          const boothName = vb.boothname || `Booth ${boothNumber}`;
+
+          const existingBooth = existingBoothMap[boothId];
+          const agentsFromUsers = boothAgentMap[boothId] || [];
+
+          // Prefer existing booth data if available, but update voter count from voter data
+          if (existingBooth) {
+            return {
+              ...existingBooth.toObject(),
+              totalVoters: vb.totalVoters,
+              isFromVoterData: false
+            };
+          }
+
+          return {
+            _id: `voter-booth-${targetAC}-${boothNumber}`,
+            boothCode: boothId,
+            boothNumber: boothNumber,
+            boothName: boothName,
+            ac_id: targetAC,
+            acName: req.user.aci_name || `AC ${targetAC}`,
+            totalVoters: vb.totalVoters,
+            assignedAgents: agentsFromUsers,
+            primaryAgent: agentsFromUsers.length > 0 ? agentsFromUsers[0] : null,
+            address: "",
+            isActive: true,
+            isFromVoterData: true
+          };
+        });
+
+        // Apply search filter if provided
+        if (search) {
+          const searchRegex = new RegExp(search, "i");
+          booths = booths.filter(b =>
+            searchRegex.test(b.boothName) || searchRegex.test(b.boothCode)
+          );
+        }
+      } catch (voterError) {
+        console.error("Error aggregating booths from voter data:", voterError);
+        // Fall back to collection-only data
+        if (search) {
+          const searchRegex = new RegExp(search, "i");
+          query.$or = [{ boothName: searchRegex }, { boothCode: searchRegex }];
+        }
+        booths = await Booth.find(query)
+          .populate("assignedAgents", "name phone role")
+          .populate("primaryAgent", "name phone role")
+          .populate("createdBy", "name role")
+          .sort({ boothNumber: 1 });
+      }
+    } else {
+      // For L0 without specific AC filter, return booths from collection
+      if (search) {
+        const searchRegex = new RegExp(search, "i");
+        query.$or = [{ boothName: searchRegex }, { boothCode: searchRegex }];
+      }
+      booths = await Booth.find(query)
+        .populate("assignedAgents", "name phone role")
+        .populate("primaryAgent", "name phone role")
+        .populate("createdBy", "name role")
+        .sort({ boothNumber: 1 });
+    }
+
+    // Apply pagination
+    const totalCount = booths.length;
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const startIndex = (pageNum - 1) * limitNum;
+    const endIndex = startIndex + limitNum;
+    const paginatedBooths = booths.slice(startIndex, endIndex);
 
     res.json({
       success: true,
-      count: booths.length,
-      booths,
+      count: paginatedBooths.length,
+      total: totalCount,
+      booths: paginatedBooths,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        totalPages,
+        total: totalCount,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1
+      }
     });
   } catch (error) {
     console.error("Error fetching booths:", error);
@@ -1839,290 +2033,6 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to build AC overview stats",
-      error: error.message,
-    });
-  }
-});
-
-// ==================== BOOTH MANAGEMENT ROUTES ====================
-
-/**
- * GET /api/rbac/booths
- * Get all booths with optional filters
- * Access: L0, L1, L2
- */
-router.get("/booths", isAuthenticated, async (req, res) => {
-  try {
-    const { ac_id, search, page = 1, limit = 100 } = req.query;
-
-    const query = { isActive: true };
-
-    // Apply AC filter for L1 and L2 users
-    if (req.user.role === "L1" || req.user.role === "L2") {
-      query.ac_id = req.user.assignedAC;
-    } else if (ac_id) {
-      query.ac_id = parseInt(ac_id);
-    }
-
-    // Search by booth name or code
-    if (search) {
-      query.$or = [
-        { boothName: { $regex: search, $options: "i" } },
-        { boothCode: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const booths = await Booth.find(query)
-      .populate("assignedAgents", "name phone booth_agent_id")
-      .populate("primaryAgent", "name phone")
-      .populate("createdBy", "name role")
-      .sort({ boothNumber: 1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    const total = await Booth.countDocuments(query);
-
-    res.json({
-      success: true,
-      booths,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit)),
-      },
-    });
-  } catch (error) {
-    console.error("Error fetching booths:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch booths",
-      error: error.message,
-    });
-  }
-});
-
-/**
- * POST /api/rbac/booths
- * Create a new booth
- * Access: L0, L1
- */
-router.post("/booths", isAuthenticated, async (req, res) => {
-  try {
-    const { boothName, boothCode, ac_id, ac_name, address, totalVoters } = req.body;
-
-    console.log("=== Booth Creation Request ===");
-    console.log("Request body:", req.body);
-    console.log("User:", req.user);
-
-    // Validate permissions
-    if (req.user.role !== "L0" && req.user.role !== "L1" && req.user.role !== "L2") {
-      console.log("Permission denied: User role is", req.user.role);
-      return res.status(403).json({
-        success: false,
-        message: "Only Super Admin, ACIM, and ACI can create booths",
-      });
-    }
-
-    // Validate required fields
-    if (!boothName || !ac_id || !ac_name) {
-      console.log("Missing required fields:", { boothName, ac_id, ac_name });
-      return res.status(400).json({
-        success: false,
-        message: "Booth name, AC ID, and AC name are required",
-      });
-    }
-
-    const normalizedAcId = parseInt(ac_id);
-
-    // L1 users can only create booths in their AC
-    if (req.user.role === "L1" && normalizedAcId !== req.user.assignedAC) {
-      console.log(`AC mismatch: User AC ${req.user.assignedAC}, Booth AC ${normalizedAcId}`);
-      return res.status(403).json({
-        success: false,
-        message: "You can only create booths in your assigned AC",
-      });
-    }
-
-    // L2 users can only create booths in their AC
-    if (req.user.role === "L2" && normalizedAcId !== req.user.assignedAC) {
-      console.log(`AC mismatch: User AC ${req.user.assignedAC}, Booth AC ${normalizedAcId}`);
-      return res.status(403).json({
-        success: false,
-        message: "You can only create booths in your assigned AC",
-      });
-    }
-
-    // Auto-generate booth number: find the max booth number for this AC and increment by 1
-    const maxBooth = await Booth.findOne({ ac_id: normalizedAcId, isActive: true })
-      .sort({ boothNumber: -1 })
-      .select("boothNumber")
-      .lean();
-
-    const nextBoothNumber = maxBooth ? maxBooth.boothNumber + 1 : 1;
-    console.log(`Auto-generated booth number for AC ${normalizedAcId}: ${nextBoothNumber}`);
-
-    // Generate booth_id in format: BOOTH<number>-<AC number>
-    const booth_id = boothCode || `BOOTH${nextBoothNumber}-${normalizedAcId}`;
-    console.log("Generated booth_id:", booth_id);
-
-    // Check if booth code already exists
-    const existingBooth = await Booth.findOne({ boothCode: booth_id });
-    if (existingBooth) {
-      console.log("Booth code already exists:", booth_id);
-      return res.status(409).json({
-        success: false,
-        message: "Booth code already exists",
-      });
-    }
-
-    const newBooth = new Booth({
-      boothNumber: nextBoothNumber,
-      boothName,
-      boothCode: booth_id,
-      booth_id,
-      ac_id: normalizedAcId,
-      ac_name,
-      address,
-      totalVoters: totalVoters || 0,
-      createdBy: req.user._id,
-      isActive: true,
-    });
-
-    console.log("Saving new booth:", newBooth.toObject());
-    await newBooth.save();
-    console.log("Booth saved successfully with ID:", newBooth._id);
-
-    const boothResponse = await Booth.findById(newBooth._id)
-      .populate("createdBy", "name role");
-
-    console.log("Booth creation successful");
-    res.status(201).json({
-      success: true,
-      message: "Booth created successfully",
-      booth: boothResponse,
-    });
-  } catch (error) {
-    console.error("Error creating booth:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to create booth",
-      error: error.message,
-    });
-  }
-});
-
-/**
- * PUT /api/rbac/booths/:boothId
- * Update a booth
- * Access: L0, L1 (for their AC)
- */
-router.put("/booths/:boothId", isAuthenticated, async (req, res) => {
-  try {
-    const { boothId } = req.params;
-    const { boothNumber, boothName, boothCode, address, totalVoters } = req.body;
-
-    const booth = await Booth.findById(boothId);
-    if (!booth) {
-      return res.status(404).json({
-        success: false,
-        message: "Booth not found",
-      });
-    }
-
-    // Check permissions
-    if (req.user.role !== "L0" && req.user.role !== "L1") {
-      return res.status(403).json({
-        success: false,
-        message: "Only Super Admin and ACIM can update booths",
-      });
-    }
-
-    // L1 can only update booths in their AC
-    if (req.user.role === "L1" && booth.ac_id !== req.user.assignedAC) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only update booths in your assigned AC",
-      });
-    }
-
-    // Update fields
-    if (boothNumber !== undefined) booth.boothNumber = parseInt(boothNumber);
-    if (boothName !== undefined) booth.boothName = boothName;
-    if (boothCode !== undefined) booth.boothCode = boothCode;
-    if (address !== undefined) booth.address = address;
-    if (totalVoters !== undefined) booth.totalVoters = totalVoters;
-
-    await booth.save();
-
-    const updatedBooth = await Booth.findById(boothId)
-      .populate("assignedAgents", "name phone booth_agent_id")
-      .populate("primaryAgent", "name phone")
-      .populate("createdBy", "name role");
-
-    res.json({
-      success: true,
-      message: "Booth updated successfully",
-      booth: updatedBooth,
-    });
-  } catch (error) {
-    console.error("Error updating booth:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update booth",
-      error: error.message,
-    });
-  }
-});
-
-/**
- * DELETE /api/rbac/booths/:boothId
- * Delete (deactivate) a booth
- * Access: L0, L1 (for their AC)
- */
-router.delete("/booths/:boothId", isAuthenticated, async (req, res) => {
-  try {
-    const { boothId } = req.params;
-
-    const booth = await Booth.findById(boothId);
-    if (!booth) {
-      return res.status(404).json({
-        success: false,
-        message: "Booth not found",
-      });
-    }
-
-    // Check permissions
-    if (req.user.role !== "L0" && req.user.role !== "L1") {
-      return res.status(403).json({
-        success: false,
-        message: "Only Super Admin and ACIM can delete booths",
-      });
-    }
-
-    // L1 can only delete booths in their AC
-    if (req.user.role === "L1" && booth.ac_id !== req.user.assignedAC) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only delete booths in your assigned AC",
-      });
-    }
-
-    // Soft delete
-    booth.isActive = false;
-    await booth.save();
-
-    res.json({
-      success: true,
-      message: "Booth deleted successfully",
-    });
-  } catch (error) {
-    console.error("Error deleting booth:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to delete booth",
       error: error.message,
     });
   }

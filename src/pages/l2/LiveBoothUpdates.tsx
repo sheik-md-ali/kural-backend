@@ -2,55 +2,116 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { Activity, Clock, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Activity, Clock, Search, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { CONSTITUENCIES } from '@/constants/constituencies';
 
-const liveUpdates = [
-  { id: 1, voter: 'Rajesh Kumar', booth: 'Booth 1', agent: 'Rajesh Kumar', timestamp: '2 mins ago', activity: 'Survey completed', question: 'Which party will you vote for?' },
-  { id: 2, voter: 'Priya Sharma', booth: 'Booth 1', agent: 'Rajesh Kumar', timestamp: '5 mins ago', activity: 'Survey completed', question: 'What is your primary concern?' },
-  { id: 3, voter: 'Suresh Babu', booth: 'Booth 3', agent: 'Priya Sharma', timestamp: '8 mins ago', activity: 'Voter details updated', question: null },
-  { id: 4, voter: 'Meena Devi', booth: 'Booth 2', agent: 'Arun Patel', timestamp: '12 mins ago', activity: 'Survey completed', question: 'Rate government performance' },
-];
+interface LiveUpdate {
+  id: string;
+  voter: string;
+  booth: string;
+  agent: string;
+  timestamp: string;
+  activity: string;
+  question: string | null;
+  acId: number | null;
+}
 
 export const LiveBoothUpdates = () => {
   const { user } = useAuth();
   const acNumber = user?.assignedAC || 119;
+  const acName = CONSTITUENCIES.find(c => c.number === acNumber)?.name || 'Unknown';
+
+  const [updates, setUpdates] = useState<LiveUpdate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [boothFilter, setBoothFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [activityFilter, setActivityFilter] = useState<string>('all');
 
+  const fetchLiveUpdates = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`/api/live-updates?acId=${acNumber}&limit=50`, {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch live updates');
+      }
+
+      const data = await response.json();
+
+      if (data.success && Array.isArray(data.updates)) {
+        setUpdates(data.updates);
+      } else {
+        setUpdates([]);
+      }
+    } catch (err) {
+      console.error('Error fetching live updates:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch updates');
+      setUpdates([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [acNumber]);
+
+  useEffect(() => {
+    fetchLiveUpdates();
+
+    // Poll for updates every 30 seconds
+    const interval = setInterval(fetchLiveUpdates, 30000);
+
+    return () => clearInterval(interval);
+  }, [fetchLiveUpdates]);
+
   // Get unique booths for filter options
-  const uniqueBooths = Array.from(new Set(liveUpdates.map(update => update.booth)));
-  
+  const uniqueBooths = Array.from(new Set(updates.map(update => update.booth).filter(Boolean)));
+
   // Get unique activities for filter options
-  const uniqueActivities = Array.from(new Set(liveUpdates.map(update => update.activity)));
+  const uniqueActivities = Array.from(new Set(updates.map(update => update.activity).filter(Boolean)));
 
   // Filter updates based on selected filters and search term
-  const filteredUpdates = liveUpdates.filter(update => {
+  const filteredUpdates = updates.filter(update => {
     // Search filter
-    const matchesSearch = update.voter.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         update.agent.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         (update.question && update.question.toLowerCase().includes(searchTerm.toLowerCase()));
-    
+    const matchesSearch =
+      update.voter.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      update.agent.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (update.question && update.question.toLowerCase().includes(searchTerm.toLowerCase()));
+
     // Booth filter
     const matchesBooth = boothFilter === 'all' || update.booth === boothFilter;
-    
+
     // Activity filter
     const matchesActivity = activityFilter === 'all' || update.activity === activityFilter;
-    
+
     return matchesSearch && matchesBooth && matchesActivity;
   });
 
   return (
     <DashboardLayout>
       <div className="space-y-8">
-        <div>
-          <h1 className="text-4xl font-bold mb-2 flex items-center">
-            <Activity className="mr-3 h-8 w-8 text-success animate-pulse" />
-            Live Booth Updates
-          </h1>
-          <p className="text-muted-foreground">Real-time activity from AC {acNumber} - Thondamuthur</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-4xl font-bold mb-2 flex items-center">
+              <Activity className="mr-3 h-8 w-8 text-success animate-pulse" />
+              Live Booth Updates
+            </h1>
+            <p className="text-muted-foreground">Real-time activity from AC {acNumber} - {acName}</p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={fetchLiveUpdates}
+            disabled={loading}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </div>
 
         <Card className="p-4">
@@ -89,8 +150,22 @@ export const LiveBoothUpdates = () => {
           </div>
         </Card>
 
+        {error && (
+          <Card className="p-6 border-destructive bg-destructive/10">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+              <p className="text-destructive">{error}</p>
+            </div>
+          </Card>
+        )}
+
         <div className="space-y-4">
-          {filteredUpdates.length > 0 ? (
+          {loading && updates.length === 0 ? (
+            <Card className="p-8 text-center">
+              <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+              <p className="text-muted-foreground">Loading live updates...</p>
+            </Card>
+          ) : filteredUpdates.length > 0 ? (
             filteredUpdates.map((update) => (
               <Card key={update.id} className="p-6 hover:shadow-lg transition-shadow">
                 <div className="flex items-start justify-between">
@@ -133,10 +208,22 @@ export const LiveBoothUpdates = () => {
             ))
           ) : (
             <Card className="p-8 text-center">
-              <p className="text-muted-foreground">No updates match the current filters.</p>
+              <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-lg font-semibold mb-2">No Recent Activity</h3>
+              <p className="text-muted-foreground">
+                {searchTerm || boothFilter !== 'all' || activityFilter !== 'all'
+                  ? 'No updates match the current filters.'
+                  : 'No recent booth activity found for this AC. Activity will appear here when booth agents submit surveys.'}
+              </p>
             </Card>
           )}
         </div>
+
+        {filteredUpdates.length > 0 && (
+          <p className="text-sm text-muted-foreground text-center">
+            Showing {filteredUpdates.length} of {updates.length} updates
+          </p>
+        )}
       </div>
     </DashboardLayout>
   );

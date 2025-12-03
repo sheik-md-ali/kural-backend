@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Building2, Edit2, Trash2, Loader2 } from 'lucide-react';
+import { Building2, Edit2, Trash2, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/use-toast';
@@ -58,6 +58,11 @@ export const BoothManagement = () => {
   const [editingBooth, setEditingBooth] = useState<Booth | null>(null);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalBooths, setTotalBooths] = useState(0);
   
   // Form states
   const [newBooth, setNewBooth] = useState({
@@ -100,12 +105,19 @@ export const BoothManagement = () => {
     }
   }, [user]);
 
-  const fetchBooths = async () => {
+  const fetchBooths = async (page = 1) => {
     try {
       setLoading(true);
-      const response = await api.get('/rbac/booths');
+      const response = await api.get(`/rbac/booths?page=${page}&limit=50`);
       console.log('Fetched booths:', response);
       setBooths(response.booths || []);
+
+      // Update pagination state from backend response
+      if (response.pagination) {
+        setCurrentPage(response.pagination.page);
+        setTotalPages(response.pagination.totalPages);
+        setTotalBooths(response.pagination.total);
+      }
     } catch (error: any) {
       console.error('Error fetching booths:', error);
       toast({
@@ -115,6 +127,12 @@ export const BoothManagement = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      fetchBooths(newPage);
     }
   };
 
@@ -385,61 +403,95 @@ export const BoothManagement = () => {
             </Button>
           </Card>
         ) : (
-          <Card className="overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Booth ID</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Name</th>
-                    {user?.role !== 'L2' && (
-                      <th className="px-4 py-3 text-left text-sm font-semibold">AC</th>
-                    )}
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Address</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Voters</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Agents</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {booths.map((booth) => (
-                    <tr key={booth._id} className="hover:bg-muted/50">
-                      <td className="px-4 py-3 text-sm font-medium">{booth.boothCode}</td>
-                      <td className="px-4 py-3 text-sm">{booth.boothName}</td>
+          <>
+            <Card className="overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Booth ID</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Name</th>
                       {user?.role !== 'L2' && (
-                        <td className="px-4 py-3 text-sm">{booth.ac_id}</td>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">AC</th>
                       )}
-                      <td className="px-4 py-3 text-sm max-w-xs truncate">{booth.address || '-'}</td>
-                      <td className="px-4 py-3 text-sm">{booth.totalVoters}</td>
-                      <td className="px-4 py-3 text-sm">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
-                          {booth.assignedAgents?.length || 0} Agent{booth.assignedAgents?.length !== 1 ? 's' : ''}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex space-x-2">
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => handleEditClick(booth)}
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => handleDeleteBooth(booth)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </td>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Address</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Voters</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Agents</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                  </thead>
+                  <tbody className="divide-y">
+                    {booths.map((booth) => (
+                      <tr key={booth._id} className="hover:bg-muted/50">
+                        <td className="px-4 py-3 text-sm font-medium">{booth.boothCode}</td>
+                        <td className="px-4 py-3 text-sm">{booth.boothName}</td>
+                        {user?.role !== 'L2' && (
+                          <td className="px-4 py-3 text-sm">{booth.ac_id}</td>
+                        )}
+                        <td className="px-4 py-3 text-sm max-w-xs truncate">{booth.address || '-'}</td>
+                        <td className="px-4 py-3 text-sm">{booth.totalVoters}</td>
+                        <td className="px-4 py-3 text-sm">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
+                            {booth.assignedAgents?.length || 0} Agent{booth.assignedAgents?.length !== 1 ? 's' : ''}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex space-x-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditClick(booth)}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteBooth(booth)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 bg-card border rounded-lg mt-4">
+                <div className="text-sm text-muted-foreground">
+                  Showing {((currentPage - 1) * 50) + 1} - {Math.min(currentPage * 50, totalBooths)} of {totalBooths} booths
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Edit Booth Dialog */}
