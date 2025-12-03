@@ -639,7 +639,7 @@ router.post("/users", isAuthenticated, async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Create user with all fields
+    // Create user with all fields (including mobile app fields)
     const newUser = new User({
       name,
       email,
@@ -656,6 +656,9 @@ router.post("/users", isAuthenticated, async (req, res) => {
       status: status || "Active",
       createdBy: req.user._id,
       isActive: true,
+      // Mobile app fields
+      emailVerified: false,
+      loginAttempts: 0,
     });
 
     await newUser.save();
@@ -843,6 +846,9 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       status: "Active",
       createdBy: req.user._id,
       isActive: true,
+      // Mobile app fields
+      emailVerified: false,
+      loginAttempts: 0,
     });
 
     await newUser.save();
@@ -924,9 +930,11 @@ router.put("/users/:userId", isAuthenticated, async (req, res) => {
     if (status) user.status = status;
     if (isActive !== undefined && req.user.role === "L0") user.isActive = isActive;
 
-    // Update password if provided
+    // Update password if provided - update both fields for compatibility
     if (password) {
-      user.passwordHash = await bcrypt.hash(password, 10);
+      const hashedPassword = await bcrypt.hash(password, 10);
+      user.passwordHash = hashedPassword;
+      user.password = hashedPassword; // Keep both fields in sync
     }
 
     await user.save();

@@ -71,6 +71,18 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // Mobile app fields
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    loginAttempts: {
+      type: Number,
+      default: 0,
+    },
+    lastLogin: {
+      type: Date,
+    },
   },
   {
     timestamps: true,
