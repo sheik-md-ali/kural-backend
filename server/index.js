@@ -949,9 +949,9 @@ app.get("/api/dashboard/stats/:acId", async (req, res) => {
       { $match: {} },
       {
         $group: {
-          _id: "$booth_id",
+          _id: "$boothname",
           boothno: { $first: "$boothno" },
-          boothname: { $first: "$boothname" },
+          booth_id: { $first: "$booth_id" },
           voters: { $sum: 1 },
         },
       },
@@ -1119,7 +1119,7 @@ app.get(/^\/api\/voters\/(?!fields|details)([^/]+)$/, async (req, res) => {
     // Build query for the AC-specific collection (no need for acQuery since collection is already AC-specific)
     const queryClauses = [];
 
-    // Add booth filter if provided (uses boothname as the unique identifier since booth_id is inconsistent)
+    // Add booth filter if provided (uses boothname as the unique identifier since booth_id has data inconsistency)
     if (booth && booth !== "all") {
       // boothname format is like "133-Municipal Middle School,Viraliyur - 641114"
       queryClauses.push({ boothname: booth });
@@ -1239,14 +1239,14 @@ app.get("/api/voters/:acId/booths", async (req, res) => {
     // Get the AC-specific voter model
     const VoterModel = getVoterModel(acId);
 
-    // Get unique booths using boothname (which contains booth number prefix and is more reliable)
-    // The boothname format is like "133-Municipal Middle School,Viraliyur - 641114"
+    // Get unique booths using boothname as the unique identifier
+    // boothname is reliable because booth_id has data inconsistency (same booth_id has different boothnames)
     const boothsAggregation = await VoterModel.aggregate([
       {
         $group: {
-          _id: "$boothname",
+          _id: "$booth_id",
           boothno: { $first: "$boothno" },
-          booth_id: { $first: "$booth_id" },
+          boothname: { $first: "$boothname" },
           voterCount: { $sum: 1 }
         }
       },
@@ -1257,12 +1257,12 @@ app.get("/api/voters/:acId/booths", async (req, res) => {
     const booths = boothsAggregation
       .filter((booth) => booth._id != null && booth._id !== "")
       .map((booth) => ({
-        boothId: booth._id,  // Use boothname as the unique identifier for filtering (more reliable than booth_id)
+        boothId: booth._id,  // Use boothname as the unique identifier for filtering (booth_id is inconsistent)
         boothNo: booth.boothno,
         boothName: booth._id || `Booth ${booth.boothno}`,
         voterCount: booth.voterCount,
-        // Display label: "Booth 1 - Aided Primary School, Kalampalayam"
-        label: `Booth ${booth.boothno}${booth._id ? ' - ' + booth._id.replace(/^\d+-/, '').trim() : ''}`
+        // Display label shows the boothname which includes school name
+        label: booth.boothname || `Booth ${booth.boothno}`
       }));
 
     return res.json({ booths });
@@ -4400,4 +4400,10 @@ app.use("/api/rbac", rbacRoutes);
 app.listen(PORT, () => {
   console.log(`Auth server listening on port ${PORT}`);
 });
+
+
+
+
+
+
 
