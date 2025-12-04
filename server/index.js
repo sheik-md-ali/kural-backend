@@ -1119,15 +1119,10 @@ app.get(/^\/api\/voters\/(?!fields|details)([^/]+)$/, async (req, res) => {
     // Build query for the AC-specific collection (no need for acQuery since collection is already AC-specific)
     const queryClauses = [];
 
-    // Add booth filter if provided (now uses booth number)
+    // Add booth filter if provided (uses boothname as the unique identifier since booth_id is inconsistent)
     if (booth && booth !== "all") {
-      const boothNum = parseInt(booth);
-      if (!isNaN(boothNum)) {
-        queryClauses.push({ boothno: boothNum });
-      } else {
-        // Fallback to boothname for backwards compatibility
-        queryClauses.push({ boothname: booth });
-      }
+      // boothname format is like "133-Municipal Middle School,Viraliyur - 641114"
+      queryClauses.push({ boothname: booth });
     }
 
     // Add status filter if provided
@@ -1244,25 +1239,30 @@ app.get("/api/voters/:acId/booths", async (req, res) => {
     // Get the AC-specific voter model
     const VoterModel = getVoterModel(acId);
 
-    // Get unique booth numbers with their names using aggregation
+    // Get unique booths using boothname (which contains booth number prefix and is more reliable)
+    // The boothname format is like "133-Municipal Middle School,Viraliyur - 641114"
     const boothsAggregation = await VoterModel.aggregate([
       {
         $group: {
-          _id: "$boothno",
-          boothname: { $first: "$boothname" }
+          _id: "$boothname",
+          boothno: { $first: "$boothno" },
+          booth_id: { $first: "$booth_id" },
+          voterCount: { $sum: 1 }
         }
       },
-      { $sort: { _id: 1 } }
+      { $sort: { boothno: 1 } }
     ]);
 
-    // Format booths as array of objects with boothNo and boothName
+    // Format booths as array of objects with boothId (using boothname for filtering), boothNo and boothName
     const booths = boothsAggregation
-      .filter((booth) => booth._id != null)
+      .filter((booth) => booth._id != null && booth._id !== "")
       .map((booth) => ({
-        boothNo: booth._id,
-        boothName: booth.boothname || `Booth ${booth._id}`,
+        boothId: booth._id,  // Use boothname as the unique identifier for filtering (more reliable than booth_id)
+        boothNo: booth.boothno,
+        boothName: booth._id || `Booth ${booth.boothno}`,
+        voterCount: booth.voterCount,
         // Display label: "Booth 1 - Aided Primary School, Kalampalayam"
-        label: `Booth ${booth._id}${booth.boothname ? ' - ' + booth.boothname.replace(/^\d+-/, '').trim() : ''}`
+        label: `Booth ${booth.boothno}${booth._id ? ' - ' + booth._id.replace(/^\d+-/, '').trim() : ''}`
       }));
 
     return res.json({ booths });
@@ -3072,6 +3072,41 @@ app.get("/api/live-updates", async (req, res) => {
       questions.map((q) => [q._id?.toString?.(), q.prompt]),
     );
 
+    // Get unique voter IDs to look up voter names
+    const voterIds = Array.from(
+      new Set(
+        recentAnswers
+          .map((a) => a.voterId?.toString?.())
+          .filter((id) => typeof id === "string" && id !== "unknown"),
+      ),
+    );
+
+    // Fetch voter info from appropriate collection(s)
+    const voterLookup = new Map();
+    const boothNameLookup = new Map();
+
+    if (voterIds.length > 0 && acId) {
+      const numericAcId = parseInt(acId, 10);
+      try {
+        const VoterModel = getVoterModel(numericAcId);
+        const voters = await VoterModel.find({
+          _id: { $in: voterIds.map(id => {
+            try { return new mongoose.Types.ObjectId(id); } catch { return id; }
+          }) }
+        }).select("name voterID boothname booth_id").lean();
+
+        voters.forEach(v => {
+          const voterName = v.name?.english || v.name?.tamil || v.name || "Unknown Voter";
+          voterLookup.set(v._id?.toString(), voterName);
+          if (v.booth_id && v.boothname) {
+            boothNameLookup.set(v.booth_id, v.boothname);
+          }
+        });
+      } catch (err) {
+        console.error("Error fetching voter names:", err);
+      }
+    }
+
     // Group answers by submission
     const grouped = new Map();
 
@@ -3081,15 +3116,24 @@ app.get("/api/live-updates", async (req, res) => {
       const groupKey = `${answer.voterId || "unknown"}-${submittedDate?.toString() || Date.now()}`;
 
       if (!grouped.has(groupKey)) {
+        // Look up voter name from voter collection
+        const lookupName = voterLookup.get(answer.voterId?.toString());
+        const fallbackName = answer.respondentName || answer.voterName || answer.applicantName || "Unknown Voter";
+        const voterName = lookupName || fallbackName;
+
+        // Get booth name - use boothId (e.g., "BOOTH1-111") and look up the actual name
+        const boothId = answer.boothId || answer.booth || answer.booth_id || "Unknown Booth";
+        const boothName = boothNameLookup.get(boothId) || boothId;
+
         grouped.set(groupKey, {
           id: answer._id?.toString() || groupKey,
-          voter: answer.respondentName ?? answer.voterName ?? answer.applicantName ?? "Unknown Voter",
-          booth: answer.boothId ?? answer.booth ?? answer.boothName ?? "Unknown Booth",
-          agent: answer.submittedByName ?? answer.agentName ?? "Unknown Agent",
+          voter: voterName,
+          booth: boothName,
+          agent: answer.submittedByName || answer.agentName || "Unknown Agent",
           timestamp: submittedDate,
           activity: "Survey completed",
           question: questionLookup.get(answer.questionId?.toString?.()) || null,
-          acId: answer.acId ?? answer.aciId ?? null,
+          acId: answer.acId || answer.aciId || null,
         });
       }
     });

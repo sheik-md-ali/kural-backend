@@ -47,7 +47,7 @@ export const VoterManager = () => {
   
   // API state
   const [voters, setVoters] = useState<Voter[]>([]);
-  const [booths, setBooths] = useState<{ boothNo: number; boothName: string; label: string }[]>([]);
+  const [booths, setBooths] = useState<{ boothId: string; boothNo: number; boothName: string; voterCount: number; label: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<Pagination>({
@@ -187,8 +187,8 @@ export const VoterManager = () => {
               <SelectContent>
                 <SelectItem value="all">All Booths</SelectItem>
                 {booths.map((booth) => (
-                  <SelectItem key={booth.boothNo} value={String(booth.boothNo)}>
-                    {booth.boothName}
+                  <SelectItem key={booth.boothId} value={booth.boothId}>
+                    {booth.boothName} ({booth.voterCount} voters)
                   </SelectItem>
                 ))}
               </SelectContent>
