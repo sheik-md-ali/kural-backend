@@ -1004,7 +1004,8 @@ router.delete("/users/:userId", isAuthenticated, async (req, res) => {
 
     // L2 users can only delete booth agents within their assigned AC
     if (req.user.role === "L2") {
-      if (user.role !== "BoothAgent") {
+      // Check for both "BoothAgent" and "Booth Agent" role formats
+      if (user.role !== "BoothAgent" && user.role !== "Booth Agent") {
         return res.status(403).json({
           success: false,
           message: "You can only delete booth agents",
