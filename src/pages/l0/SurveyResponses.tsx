@@ -14,7 +14,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { api } from '@/lib/api';
 import { fetchSurvey, Survey } from '@/lib/surveys';
 import { useState, useEffect } from 'react';
-import { Search, Download, RefreshCw, Eye, FileText, User, Calendar, CheckCircle2, Hash, Building2 } from 'lucide-react';
+import { Search, Download, RefreshCw, Eye, FileText, User, Calendar, CheckCircle2, Hash, Building2, Filter } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -29,6 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { CONSTITUENCIES } from '@/constants/constituencies';
 
 interface SurveyResponse {
   id: string;
@@ -48,6 +49,13 @@ interface Pagination {
   pages: number;
 }
 
+interface Booth {
+  _id: string;
+  boothCode: string;
+  boothName: string;
+  ac_id: number;
+}
+
 export const SurveyResponses = () => {
   const { toast } = useToast();
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
@@ -59,8 +67,11 @@ export const SurveyResponses = () => {
     pages: 0,
   });
   const [searchTerm, setSearchTerm] = useState('');
+  const [acFilter, setAcFilter] = useState<string>('all');
   const [boothFilter, setBoothFilter] = useState<string>('all');
   const [surveyFilter, setSurveyFilter] = useState<string>('all');
+  const [booths, setBooths] = useState<Booth[]>([]);
+  const [loadingBooths, setLoadingBooths] = useState(false);
   const [selectedResponse, setSelectedResponse] = useState<SurveyResponse | null>(null);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [surveyQuestions, setSurveyQuestions] = useState<Survey | null>(null);
@@ -68,7 +79,30 @@ export const SurveyResponses = () => {
 
   useEffect(() => {
     fetchResponses();
-  }, [pagination.page, boothFilter, surveyFilter]);
+  }, [pagination.page, acFilter, boothFilter, surveyFilter]);
+
+  // Fetch booths when constituency changes
+  useEffect(() => {
+    if (acFilter && acFilter !== 'all') {
+      fetchBoothsForAC(parseInt(acFilter));
+    } else {
+      setBooths([]);
+      setBoothFilter('all');
+    }
+  }, [acFilter]);
+
+  const fetchBoothsForAC = async (acId: number) => {
+    try {
+      setLoadingBooths(true);
+      const response = await api.get(`/rbac/booths?ac=${acId}&limit=100`);
+      setBooths(response.booths || []);
+    } catch (error: any) {
+      console.error('Error fetching booths:', error);
+      setBooths([]);
+    } finally {
+      setLoadingBooths(false);
+    }
+  };
 
   const fetchResponses = async () => {
     try {
@@ -77,6 +111,10 @@ export const SurveyResponses = () => {
         page: pagination.page.toString(),
         limit: pagination.limit.toString(),
       });
+
+      if (acFilter && acFilter !== 'all') {
+        params.append('ac', acFilter);
+      }
 
       if (boothFilter && boothFilter !== 'all') {
         params.append('booth', boothFilter);
@@ -215,7 +253,7 @@ export const SurveyResponses = () => {
         <Card className="p-6">
           <div className="space-y-4">
             {/* Filters */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="md:col-span-2">
                 <div className="flex gap-2">
                   <Input
@@ -230,13 +268,41 @@ export const SurveyResponses = () => {
                   </Button>
                 </div>
               </div>
-              <Select value={boothFilter} onValueChange={setBoothFilter}>
+              <Select value={acFilter} onValueChange={(value) => {
+                setAcFilter(value);
+                setBoothFilter('all'); // Reset booth filter when AC changes
+                setPagination(prev => ({ ...prev, page: 1 }));
+              }}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Filter by Booth" />
+                  <SelectValue placeholder="Filter by Constituency" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Constituencies</SelectItem>
+                  {CONSTITUENCIES.map((constituency) => (
+                    <SelectItem key={constituency.number} value={String(constituency.number)}>
+                      AC {constituency.number} - {constituency.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={boothFilter}
+                onValueChange={(value) => {
+                  setBoothFilter(value);
+                  setPagination(prev => ({ ...prev, page: 1 }));
+                }}
+                disabled={acFilter === 'all' || loadingBooths}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={acFilter === 'all' ? 'Select Constituency First' : loadingBooths ? 'Loading...' : 'Filter by Booth'} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Booths</SelectItem>
-                  {/* Add booth options dynamically if needed */}
+                  {booths.map((booth) => (
+                    <SelectItem key={booth._id} value={booth.boothCode}>
+                      {booth.boothName || booth.boothCode}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Select value={surveyFilter} onValueChange={setSurveyFilter}>
