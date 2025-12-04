@@ -331,10 +331,11 @@ export const BoothAgentManagementNew = () => {
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
-                    <Label htmlFor="username">Username <span className="text-destructive">*</span></Label>
-                    <Input 
-                      id="username" 
-                      placeholder="Enter username" 
+                    <Label htmlFor="email">Email <span className="text-destructive">*</span></Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="Enter email address"
                       value={newAgent.username}
                       onChange={(e) => setNewAgent({...newAgent, username: e.target.value})}
                     />
@@ -456,7 +457,7 @@ export const BoothAgentManagementNew = () => {
                   <tr>
                     <th className="px-4 py-3 text-left text-sm font-semibold">Agent ID</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold">Name</th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold">Username</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold">Email</th>
                     <th className="px-4 py-3 text-left text-sm font-semibold">Phone</th>
                     {user?.role !== 'L2' && (
                       <th className="px-4 py-3 text-left text-sm font-semibold">AC</th>
