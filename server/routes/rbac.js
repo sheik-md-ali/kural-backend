@@ -763,7 +763,64 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
     }
 
     // Verify booth exists and is in the correct AC
-    const booth = await Booth.findById(booth_id);
+    // First try to find by ObjectId, then by boothCode
+    let booth = null;
+
+    // Check if booth_id is a valid MongoDB ObjectId
+    if (mongoose.Types.ObjectId.isValid(booth_id) && !booth_id.startsWith('voter-booth-')) {
+      booth = await Booth.findById(booth_id);
+    }
+
+    // If not found by _id, try to find by boothCode (for voter-derived booths)
+    if (!booth) {
+      // Extract boothCode from synthetic ID like "voter-booth-111-1" or use as-is
+      let boothCode = booth_id;
+      if (booth_id.startsWith('voter-booth-')) {
+        // Synthetic ID format: voter-booth-{acId}-{boothNumber}
+        // We need to find or create a booth with this info
+        const parts = booth_id.split('-');
+        const acIdFromId = parseInt(parts[2]);
+        const boothNumberFromId = parseInt(parts[3]);
+        boothCode = `BOOTH${boothNumberFromId}-${acIdFromId}`;
+      }
+
+      booth = await Booth.findOne({
+        $or: [
+          { boothCode: boothCode },
+          { booth_id: boothCode },
+          { boothCode: booth_id }
+        ],
+        isActive: true
+      });
+
+      // If booth still doesn't exist, create it from voter data
+      if (!booth && booth_id.startsWith('voter-booth-')) {
+        const parts = booth_id.split('-');
+        const acIdFromId = parseInt(parts[2]);
+        const boothNumberFromId = parseInt(parts[3]);
+        const generatedBoothCode = `BOOTH${boothNumberFromId}-${acIdFromId}`;
+
+        // Try to get booth name from voter data
+        const voterCollection = mongoose.connection.collection(`voters_${acIdFromId}`);
+        const voterSample = await voterCollection.findOne({ booth_id: generatedBoothCode });
+        const boothName = voterSample?.boothname || `Booth ${boothNumberFromId}`;
+
+        booth = new Booth({
+          boothNumber: boothNumberFromId,
+          boothName: boothName,
+          boothCode: generatedBoothCode,
+          booth_id: generatedBoothCode,
+          ac_id: acIdFromId,
+          ac_name: aci_name || `AC ${acIdFromId}`,
+          isActive: true,
+          assignedAgents: [],
+          createdBy: req.user._id
+        });
+        await booth.save();
+        console.log(`Created new booth from voter data: ${generatedBoothCode}`);
+      }
+    }
+
     if (!booth || !booth.isActive) {
       return res.status(404).json({
         success: false,
@@ -801,12 +858,15 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
     // Format: {booth_id}-{sequence} where sequence is the number of agents for this booth
     // Get the booth's booth_id (e.g., "BOOTH1-119")
     const boothIdentifier = booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`;
-    
-    // Count existing agents assigned to this specific booth
-    const existingAgentsCount = await User.countDocuments({ 
-      assignedBoothId: booth_id,
+
+    // Count existing agents assigned to this specific booth (by booth ObjectId OR booth_id string)
+    const existingAgentsCount = await User.countDocuments({
+      $or: [
+        { assignedBoothId: booth._id },
+        { booth_id: boothIdentifier }
+      ],
       role: { $in: ["Booth Agent", "BoothAgent"] },
-      isActive: true 
+      isActive: true
     });
     
     // Generate booth_agent_id: {booth_id}-{sequence}
@@ -830,6 +890,7 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
     // Create booth agent user
     // Store username in email field for login purposes
     // Store normalized phone number for consistency
+    const boothIdentifierStr = booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`;
     const newUser = new User({
       email: username.toLowerCase(),
       name: fullName.trim(),
@@ -840,8 +901,8 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       assignedAC: aciIdNum,
       aci_id: aciIdNum,
       aci_name: aci_name || booth.ac_name,
-      assignedBoothId: booth_id, // Store the booth ObjectId reference
-      booth_id: booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`, // Store the booth identifier string
+      assignedBoothId: booth._id, // Store the actual booth ObjectId reference
+      booth_id: boothIdentifierStr, // Store the booth identifier string (e.g., "BOOTH1-111")
       booth_agent_id,
       status: "Active",
       createdBy: req.user._id,
@@ -850,6 +911,8 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       emailVerified: false,
       loginAttempts: 0,
     });
+
+    console.log(`Creating booth agent with booth: ${boothIdentifierStr}, boothObjectId: ${booth._id}`);
 
     await newUser.save();
 
@@ -943,10 +1006,112 @@ router.put("/users/:userId", isAuthenticated, async (req, res) => {
     if (role && req.user.role === "L0") user.role = role; // Only L0 can change roles
     if (assignedAC !== undefined) user.assignedAC = assignedAC;
     if (aci_name) user.aci_name = aci_name;
-    if (assignedBoothId !== undefined) user.assignedBoothId = assignedBoothId;
-    if (booth_id !== undefined) user.booth_id = booth_id;
     if (status) user.status = status;
     if (isActive !== undefined && req.user.role === "L0") user.isActive = isActive;
+
+    // Handle booth assignment update for booth agents
+    const newBoothId = booth_id || assignedBoothId;
+    if (newBoothId !== undefined && (user.role === "Booth Agent" || user.role === "BoothAgent")) {
+      // Store old booth info for updating assignedAgents
+      const oldBoothId = user.assignedBoothId;
+
+      // Look up the new booth (similar logic to create endpoint)
+      let booth = null;
+
+      // Check if booth_id is a valid MongoDB ObjectId
+      if (mongoose.Types.ObjectId.isValid(newBoothId) && !newBoothId.startsWith('voter-booth-')) {
+        booth = await Booth.findById(newBoothId);
+      }
+
+      // If not found by _id, try to find by boothCode (for voter-derived booths)
+      if (!booth) {
+        // Extract boothCode from synthetic ID like "voter-booth-111-1" or use as-is
+        let boothCode = newBoothId;
+        if (newBoothId.startsWith('voter-booth-')) {
+          // Synthetic ID format: voter-booth-{acId}-{boothNumber}
+          const parts = newBoothId.split('-');
+          const acIdFromId = parseInt(parts[2]);
+          const boothNumberFromId = parseInt(parts[3]);
+          boothCode = `BOOTH${boothNumberFromId}-${acIdFromId}`;
+        }
+
+        booth = await Booth.findOne({
+          $or: [
+            { boothCode: boothCode },
+            { booth_id: boothCode },
+            { boothCode: newBoothId }
+          ],
+          isActive: true
+        });
+
+        // If booth still doesn't exist, create it from voter data
+        if (!booth && newBoothId.startsWith('voter-booth-')) {
+          const parts = newBoothId.split('-');
+          const acIdFromId = parseInt(parts[2]);
+          const boothNumberFromId = parseInt(parts[3]);
+          const generatedBoothCode = `BOOTH${boothNumberFromId}-${acIdFromId}`;
+
+          // Try to get booth name from voter data
+          const voterCollection = mongoose.connection.collection(`voters_${acIdFromId}`);
+          const voterSample = await voterCollection.findOne({ booth_id: generatedBoothCode });
+          const boothName = voterSample?.boothname || `Booth ${boothNumberFromId}`;
+
+          booth = new Booth({
+            boothNumber: boothNumberFromId,
+            boothName: boothName,
+            boothCode: generatedBoothCode,
+            booth_id: generatedBoothCode,
+            ac_id: acIdFromId,
+            ac_name: user.aci_name || `AC ${acIdFromId}`,
+            isActive: true,
+            assignedAgents: [],
+            createdBy: req.user._id
+          });
+          await booth.save();
+          console.log(`Created new booth from voter data during update: ${generatedBoothCode}`);
+        }
+      }
+
+      if (booth && booth.isActive) {
+        // Get booth identifier string
+        const boothIdentifierStr = booth.booth_id || booth.boothCode || `BOOTH${booth.boothNumber}-${booth.ac_id}`;
+
+        // Update user's booth fields
+        user.assignedBoothId = booth._id;
+        user.booth_id = boothIdentifierStr;
+
+        console.log(`Updating booth agent ${user._id} booth assignment: ${user.booth_id} -> ${boothIdentifierStr}`);
+
+        // Remove user from old booth's assignedAgents if booth changed
+        if (oldBoothId && oldBoothId.toString() !== booth._id.toString()) {
+          const oldBooth = await Booth.findById(oldBoothId);
+          if (oldBooth) {
+            oldBooth.assignedAgents = oldBooth.assignedAgents.filter(
+              agentId => agentId.toString() !== user._id.toString()
+            );
+            // If this was the primary agent, clear it
+            if (oldBooth.primaryAgent && oldBooth.primaryAgent.toString() === user._id.toString()) {
+              oldBooth.primaryAgent = oldBooth.assignedAgents.length > 0 ? oldBooth.assignedAgents[0] : null;
+            }
+            await oldBooth.save();
+            console.log(`Removed agent from old booth ${oldBooth.boothCode}`);
+          }
+        }
+
+        // Add user to new booth's assignedAgents if not already there
+        if (!booth.assignedAgents.includes(user._id)) {
+          booth.assignedAgents.push(user._id);
+          // If this is the first agent, set as primary
+          if (!booth.primaryAgent) {
+            booth.primaryAgent = user._id;
+          }
+          await booth.save();
+          console.log(`Added agent to new booth ${booth.boothCode}`);
+        }
+      } else {
+        console.warn(`Booth not found for update: ${newBoothId}`);
+      }
+    }
 
     // Update password if provided - update both fields for compatibility
     if (password) {
