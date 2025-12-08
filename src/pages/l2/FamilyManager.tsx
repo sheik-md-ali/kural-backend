@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import { FamilyDetailDrawer } from '@/components/FamilyDetailDrawer';
 import API_BASE_URL from '@/lib/api';
+import { CONSTITUENCIES } from '@/constants/constituencies';
 
 interface Family {
   id: string;
@@ -127,7 +128,9 @@ export const FamilyManager = () => {
       <div className="space-y-8">
         <div>
           <h1 className="text-4xl font-bold mb-2">Family Manager</h1>
-          <p className="text-muted-foreground">Manage family records for AC {acNumber} - Thondamuthur</p>
+          <p className="text-muted-foreground">
+            Manage family records for AC {acNumber} - {user?.aciName || CONSTITUENCIES.find(c => c.number === acNumber)?.name || ''}
+          </p>
         </div>
 
         {error && (
@@ -156,7 +159,7 @@ export const FamilyManager = () => {
                 <SelectItem value="all">All Booths</SelectItem>
                 {booths.map((booth) => (
                   <SelectItem key={booth.boothId} value={booth.boothId}>
-                    {booth.boothId}
+                    {booth.boothName || booth.label || booth.boothId} ({booth.boothNo})
                   </SelectItem>
                 ))}
               </SelectContent>

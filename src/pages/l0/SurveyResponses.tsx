@@ -300,7 +300,7 @@ export const SurveyResponses = () => {
                   <SelectItem value="all">All Booths</SelectItem>
                   {booths.map((booth) => (
                     <SelectItem key={booth._id} value={booth.boothName || booth.boothCode}>
-                      {booth.boothName || booth.boothCode}
+                      {booth.boothName || booth.boothCode} ({booth.boothCode?.split('-')[0] || 'N/A'})
                     </SelectItem>
                   ))}
                 </SelectContent>

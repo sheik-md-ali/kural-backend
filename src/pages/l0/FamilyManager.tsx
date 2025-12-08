@@ -187,10 +187,10 @@ export const FamilyManager = () => {
                 <SelectValue placeholder="All Booths" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Booths</SelectItem>
+                <SelectItem value="all">All Booths ({booths.length})</SelectItem>
                 {booths.map((booth) => (
                   <SelectItem key={booth.boothId} value={booth.boothId}>
-                    {booth.boothId}
+                    {booth.boothName || booth.label || booth.boothId} ({booth.boothNo || booth.boothId.split('-')[0]})
                   </SelectItem>
                 ))}
               </SelectContent>

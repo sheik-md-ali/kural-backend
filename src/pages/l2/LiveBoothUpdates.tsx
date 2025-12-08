@@ -7,6 +7,7 @@ import { Activity, Clock, Search, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect, useCallback } from 'react';
 import { CONSTITUENCIES } from '@/constants/constituencies';
+import { useBooths, getBoothLabel } from '@/hooks/use-booths';
 
 interface LiveUpdate {
   id: string;
@@ -22,7 +23,7 @@ interface LiveUpdate {
 export const LiveBoothUpdates = () => {
   const { user } = useAuth();
   const acNumber = user?.assignedAC || 119;
-  const acName = CONSTITUENCIES.find(c => c.number === acNumber)?.name || 'Unknown';
+  const acName = user?.aciName || CONSTITUENCIES.find(c => c.number === acNumber)?.name || 'Unknown';
 
   const [updates, setUpdates] = useState<LiveUpdate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,6 +31,16 @@ export const LiveBoothUpdates = () => {
   const [boothFilter, setBoothFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [activityFilter, setActivityFilter] = useState<string>('all');
+
+  // Use centralized booth fetching hook
+  const { booths, loading: loadingBooths, fetchBooths } = useBooths();
+
+  // Fetch booths when AC changes
+  useEffect(() => {
+    if (acNumber) {
+      fetchBooths(acNumber);
+    }
+  }, [acNumber, fetchBooths]);
 
   const fetchLiveUpdates = useCallback(async () => {
     try {
@@ -68,9 +79,6 @@ export const LiveBoothUpdates = () => {
 
     return () => clearInterval(interval);
   }, [fetchLiveUpdates]);
-
-  // Get unique booths for filter options
-  const uniqueBooths = Array.from(new Set(updates.map(update => update.booth).filter(Boolean)));
 
   // Get unique activities for filter options
   const uniqueActivities = Array.from(new Set(updates.map(update => update.activity).filter(Boolean)));
@@ -125,14 +133,16 @@ export const LiveBoothUpdates = () => {
                 className="pl-10"
               />
             </div>
-            <Select value={boothFilter} onValueChange={setBoothFilter}>
+            <Select value={boothFilter} onValueChange={setBoothFilter} disabled={loadingBooths}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Filter by Booth" />
+                <SelectValue placeholder={loadingBooths ? "Loading booths..." : "Filter by Booth"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Booths</SelectItem>
-                {uniqueBooths.map(booth => (
-                  <SelectItem key={booth} value={booth}>{booth}</SelectItem>
+                <SelectItem value="all">All Booths ({booths.length})</SelectItem>
+                {booths.map(booth => (
+                  <SelectItem key={booth._id || booth.boothCode} value={booth.boothName || booth.boothCode}>
+                    {getBoothLabel(booth)}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>

@@ -170,10 +170,10 @@ export const ACFamilyManager = () => {
                 <SelectValue placeholder="All Booths" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Booths</SelectItem>
+                <SelectItem value="all">All Booths ({booths.length})</SelectItem>
                 {booths.map((booth) => (
                   <SelectItem key={booth.boothNo} value={booth.boothId || `BOOTH${booth.boothNo}-${acNumber}`}>
-                    {booth.boothName}
+                    {booth.boothName || booth.label} ({booth.boothNo})
                   </SelectItem>
                 ))}
               </SelectContent>

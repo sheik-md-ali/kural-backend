@@ -9,6 +9,7 @@ import { SurveyDetailDrawer } from '@/components/SurveyDetailDrawer';
 import { useToast } from '@/components/ui/use-toast';
 import { fetchSurveys } from '@/lib/surveys';
 import API_BASE_URL from '@/lib/api';
+import { useBooths, getBoothLabel } from '@/hooks/use-booths';
 
 interface SurveyResponse {
   id: string;
@@ -38,7 +39,16 @@ export const SurveyManager = () => {
   const [isLoadingForms, setIsLoadingForms] = useState(false);
   const [surveyResponses, setSurveyResponses] = useState<SurveyResponse[]>([]);
   const [isLoadingResponses, setIsLoadingResponses] = useState(false);
-  const [uniqueBooths, setUniqueBooths] = useState<string[]>([]);
+
+  // Use centralized booth fetching hook
+  const { booths, loading: loadingBooths, fetchBooths } = useBooths();
+
+  // Fetch booths when AC changes
+  useEffect(() => {
+    if (acNumber) {
+      fetchBooths(acNumber);
+    }
+  }, [acNumber, fetchBooths]);
 
   // Fetch survey responses from the API
   const fetchSurveyResponses = useCallback(async () => {
@@ -59,12 +69,6 @@ export const SurveyManager = () => {
 
       const data = await response.json();
       setSurveyResponses(data.responses || []);
-
-      // Extract unique booths from responses for filtering
-      const booths = [...new Set(data.responses?.map((r: SurveyResponse) => r.booth).filter((b: string) => b && b !== 'N/A') || [])];
-      if (booths.length > 0) {
-        setUniqueBooths(booths as string[]);
-      }
     } catch (error) {
       console.error('Failed to load survey responses', error);
       toast({
@@ -166,15 +170,15 @@ export const SurveyManager = () => {
                 )}
               </SelectContent>
             </Select>
-            <Select value={boothFilter} onValueChange={setBoothFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter by Booth" />
+            <Select value={boothFilter} onValueChange={setBoothFilter} disabled={loadingBooths}>
+              <SelectTrigger className="w-[280px]">
+                <SelectValue placeholder={loadingBooths ? "Loading booths..." : "Filter by Booth"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Booths</SelectItem>
-                {uniqueBooths.map((booth) => (
-                  <SelectItem key={booth} value={booth}>
-                    {booth}
+                <SelectItem value="all">All Booths ({booths.length})</SelectItem>
+                {booths.map((booth) => (
+                  <SelectItem key={booth._id || booth.boothCode} value={booth.boothName || booth.boothCode}>
+                    {getBoothLabel(booth)}
                   </SelectItem>
                 ))}
               </SelectContent>

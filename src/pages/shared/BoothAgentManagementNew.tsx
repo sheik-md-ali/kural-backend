@@ -117,8 +117,9 @@ export const BoothAgentManagementNew = () => {
         phoneNumber: agent.phone || agent.phoneNumber || '',
         aci_id: agent.aci_id || agent.assignedAC || 0,
         aci_name: agent.aci_name || '',
-        booth_id: agent.booth_id || agent.assignedBoothId?._id || agent.assignedBoothId || '',
-        boothCode: agent.assignedBoothId?.boothCode || agent.boothCode || '',
+        // Prefer string booth_id, then populated booth_id, then populated _id
+        booth_id: agent.booth_id || agent.assignedBoothId?.booth_id || agent.assignedBoothId?.boothCode || (typeof agent.assignedBoothId === 'string' ? agent.assignedBoothId : agent.assignedBoothId?._id) || '',
+        boothCode: agent.assignedBoothId?.boothCode || agent.assignedBoothId?.booth_id || agent.booth_id || agent.boothCode || '',
         boothName: agent.assignedBoothId?.boothName || agent.boothName || '',
       }));
 
@@ -342,8 +343,13 @@ export const BoothAgentManagementNew = () => {
   };
 
   const getBoothInfo = (booth_id: string) => {
-    const booth = booths.find(b => b._id === booth_id || b.booth_id === booth_id);
-    return booth ? `${booth.boothCode} - ${booth.boothName}` : 'N/A';
+    if (!booth_id) return 'N/A';
+    const booth = booths.find(b => b._id === booth_id || b.booth_id === booth_id || b.boothCode === booth_id);
+    if (booth) {
+      return `${booth.boothCode || booth.booth_id} - ${booth.boothName}`;
+    }
+    // Return the booth_id string itself as fallback (e.g., "BOOTH1-111")
+    return booth_id.startsWith('BOOTH') ? booth_id : 'N/A';
   };
 
   // Get unique ACs for filter dropdown
@@ -556,7 +562,7 @@ export const BoothAgentManagementNew = () => {
                       <td className="px-4 py-3 text-sm max-w-xs truncate">
                         {agent.boothCode && agent.boothName
                           ? `${agent.boothCode} - ${agent.boothName}`
-                          : agent.boothCode || agent.boothName || getBoothInfo(agent.booth_id)}
+                          : agent.boothCode || agent.boothName || agent.booth_id || getBoothInfo(agent.booth_id)}
                       </td>
                       <td className="px-4 py-3 text-sm">
                         <Badge variant={agent.isActive ? "default" : "secondary"}>

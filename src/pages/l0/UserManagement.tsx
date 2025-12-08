@@ -49,7 +49,10 @@ interface User {
     _id: string;
     boothName: string;
     boothCode: string;
+    booth_id?: string;
   };
+  booth_id?: string; // String booth ID (e.g., "BOOTH1-111") - fallback when assignedBoothId not populated
+  booth_agent_id?: string; // Agent ID (e.g., "BOOTH1-111-1")
   createdBy?: {
     _id: string;
     name: string;
@@ -133,14 +136,29 @@ const UserManagement: React.FC = () => {
     }
   }, [searchParams, currentUser, setSearchParams]);
 
-  const fetchBooths = async () => {
+  const fetchBooths = async (acId?: string) => {
     try {
-      const response = await api.get("/rbac/booths");
+      const params = acId ? `?ac=${acId}` : '';
+      const response = await api.get(`/rbac/booths${params}`);
       setBooths(response.booths || []);
     } catch (error: any) {
       console.error("Failed to fetch booths:", error);
     }
   };
+
+  // Fetch booths when AC is selected for BoothAgent role
+  useEffect(() => {
+    if (formData.role === 'BoothAgent' && formData.assignedAC) {
+      // Clear booths first to prevent showing stale data
+      setBooths([]);
+      // Clear selected booth when AC changes
+      setFormData(prev => ({ ...prev, assignedBoothId: '' }));
+      fetchBooths(formData.assignedAC);
+    } else if (!formData.assignedAC) {
+      // Clear booths if no AC is selected
+      setBooths([]);
+    }
+  }, [formData.assignedAC, formData.role]);
 
   const fetchUsers = async () => {
     try {
@@ -274,15 +292,17 @@ const UserManagement: React.FC = () => {
   const handleEdit = (user: User) => {
     setIsEditMode(true);
     setEditingUser(user);
+    // Normalize role: "Booth Agent" -> "BoothAgent" for consistency
+    const normalizedRole = user.role === "Booth Agent" ? "BoothAgent" : user.role;
     setFormData({
       name: user.name,
       email: user.email || "",
       phone: user.phone || "",
       password: "",
-      role: user.role,
+      role: normalizedRole,
       assignedAC: user.assignedAC?.toString() || "",
       aci_name: user.aci_name || "",
-      assignedBoothId: user.assignedBoothId?._id || "",
+      assignedBoothId: user.assignedBoothId?._id || user.booth_id || "",
       status: user.status || "Active",
     });
     setIsDialogOpen(true);
@@ -437,12 +457,16 @@ const UserManagement: React.FC = () => {
                 <TableCell>
                   {user.assignedBoothId ? (
                     <div>
-                      <div className="font-medium">{user.assignedBoothId.boothCode || user.assignedBoothId.boothName}</div>
-                      {user.assignedBoothId.boothName && user.assignedBoothId.boothCode && (
+                      <div className="font-medium">{user.assignedBoothId.boothCode || user.assignedBoothId.booth_id || user.assignedBoothId.boothName}</div>
+                      {user.assignedBoothId.boothName && (user.assignedBoothId.boothCode || user.assignedBoothId.booth_id) && (
                         <div className="text-sm text-muted-foreground">
                           {user.assignedBoothId.boothName}
                         </div>
                       )}
+                    </div>
+                  ) : user.booth_id ? (
+                    <div>
+                      <div className="font-medium">{user.booth_id}</div>
                     </div>
                   ) : (
                     <span className="text-muted-foreground">-</span>
@@ -645,13 +669,7 @@ const UserManagement: React.FC = () => {
                       }
                     >
                       <option value="">Select Booth (Optional)</option>
-                      {booths
-                        .filter((booth) =>
-                          formData.assignedAC
-                            ? booth.ac_id === parseInt(formData.assignedAC)
-                            : true
-                        )
-                        .map((booth) => (
+                      {booths.map((booth) => (
                           <option key={booth._id} value={booth._id}>
                             {booth.boothName} ({booth.boothCode})
                           </option>

@@ -338,7 +338,7 @@ export const MobileAppResponses = () => {
                   <SelectItem value="all">All Booths</SelectItem>
                   {booths.map((booth) => (
                     <SelectItem key={booth.booth_id || booth.boothNo} value={booth.booth_id || String(booth.boothNo)}>
-                      {booth.displayName || `${booth.booth_id || ''} - ${booth.boothName || `Booth ${booth.boothNo}`}`}
+                      {booth.boothName || `Booth ${booth.boothNo}`} ({booth.booth_id?.split('-')[0] || `BOOTH${booth.boothNo}`})
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -171,10 +171,10 @@ export const ACVoterManager = () => {
                 <SelectValue placeholder="All Booths" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Booths</SelectItem>
+                <SelectItem value="all">All Booths ({booths.length})</SelectItem>
                 {booths.map((booth) => (
                   <SelectItem key={booth.boothId} value={booth.boothId}>
-                    {booth.boothName} ({booth.voterCount} voters)
+                    {booth.boothName || booth.label} ({booth.boothNo}) - {booth.voterCount} voters
                   </SelectItem>
                 ))}
               </SelectContent>
