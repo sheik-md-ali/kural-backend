@@ -6,7 +6,7 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
 BRANCH="${BRANCH:-main}"
-PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-kural-website-prod}"
+PM2_PROCESS_NAME="${PM2_PROCESS_NAME:-kural-backend}"
 
 echo "==> Deploying branch: ${BRANCH}"
 echo "==> Node version: $(node -v)"
