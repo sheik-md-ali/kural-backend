@@ -3,6 +3,41 @@ import express from "express";
 import session from "express-session";
 import MongoStore from "connect-mongo";
 import helmet from "helmet";
+import compression from "compression";
+import mongoose from "mongoose";
+import { createRequire } from 'module';
+
+// Create require for CommonJS modules
+const require = createRequire(import.meta.url);
+
+// Import logger first (before other modules for console shim)
+const logger = require('./utils/logger.cjs');
+
+// Production console shim - redirect all console.* to Pino
+if (process.env.NODE_ENV === 'production') {
+  global.console = {
+    log: (...args) => logger.info({ consoleArgs: args }, 'console.log'),
+    info: (...args) => logger.info({ consoleArgs: args }, 'console.info'),
+    warn: (...args) => logger.warn({ consoleArgs: args }, 'console.warn'),
+    error: (...args) => logger.error({ consoleArgs: args }, 'console.error'),
+    debug: (...args) => logger.debug({ consoleArgs: args }, 'console.debug'),
+    trace: (...args) => logger.trace({ consoleArgs: args }, 'console.trace'),
+    // Preserve these for debugging if needed
+    dir: console.dir,
+    time: console.time,
+    timeEnd: console.timeEnd,
+    table: console.table
+  };
+}
+
+// Import logging utilities
+const requestLogger = require('./middleware/requestLogger.cjs');
+const { errorHandler, notFoundHandler, setupProcessErrorHandlers } = require('./middleware/errorHandler.cjs');
+const { setupMongoQueryLogging, setupConnectionLogging } = require('./utils/mongoLogger.cjs');
+const { startEventLoopMonitor } = require('./utils/eventLoopMonitor.cjs');
+
+// Setup process error handlers early
+setupProcessErrorHandlers();
 
 // Import configuration
 import {
@@ -18,8 +53,33 @@ import {
 // Import route registrar
 import { registerRoutes } from "./routes/index.js";
 
+logger.info({ pid: process.pid }, 'Starting server initialization');
+
 const app = express();
 app.set("trust proxy", 1);
+
+// Performance optimizations
+app.set("etag", false); // Disable ETags for faster responses
+app.disable("x-powered-by"); // Reduce header size
+
+// Request logging middleware - register EARLY
+app.use(requestLogger.createRequestLogger({
+  skipPaths: ['/favicon.ico'],
+  skipExtensions: ['.js', '.css', '.png', '.jpg', '.ico', '.map']
+}));
+
+// Compression middleware - compress responses > 1kb
+app.use(compression({
+  level: 6, // Balanced compression level (1-9)
+  threshold: 1024, // Only compress responses > 1kb
+  filter: (req, res) => {
+    // Skip compression for SSE or streaming
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 
 // Security middleware - adds various HTTP headers for security
 app.use(helmet({
@@ -54,6 +114,7 @@ app.use(
         return callback(null, true);
       }
 
+      logger.warn({ origin }, 'CORS origin rejected');
       return callback(
         new Error(
           `CORS origin ${origin} not allowed. Update CLIENT_ORIGIN env variable.`,
@@ -69,6 +130,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Initialize MongoDB session store
+logger.info('Initializing MongoDB session store');
 const sessionStore = MongoStore.create({
   mongoUrl: MONGODB_URI,
   collectionName: 'sessions',
@@ -76,6 +138,16 @@ const sessionStore = MongoStore.create({
   autoRemove: 'native',
   touchAfter: 24 * 3600, // lazy session update
 });
+
+sessionStore.on('create', (sessionId) => {
+  logger.debug({ sessionId: sessionId.substring(0, 8) + '...' }, 'Session created');
+});
+
+sessionStore.on('destroy', (sessionId) => {
+  logger.debug({ sessionId: sessionId.substring(0, 8) + '...' }, 'Session destroyed');
+});
+
+logger.info('Session store initialized');
 
 // Session middleware
 app.use(
@@ -101,21 +173,44 @@ app.use((req, res, next) => {
   if (req.session && req.session.user) {
     req.user = req.session.user;
     if (process.env.NODE_ENV === 'development') {
-      console.log('Session restored - User:', {
-        id: req.user.id || req.user._id,
+      logger.debug({
+        userId: req.user.id || req.user._id,
         role: req.user.role,
-        sessionId: req.sessionID
-      });
+        sessionId: req.sessionID?.substring(0, 8) + '...'
+      }, 'Session restored');
     }
   }
   next();
 });
 
+// Setup MongoDB query logging
+setupMongoQueryLogging(mongoose);
+setupConnectionLogging(mongoose.connection);
+
+// Start event loop monitoring
+startEventLoopMonitor();
+
 // Register all routes
 registerRoutes(app);
 
+// 404 handler (after all routes)
+app.use(notFoundHandler);
+
+// Global error handler (must be last)
+app.use(errorHandler);
+
 // Start server
 app.listen(PORT, () => {
-  console.log(`Auth server listening on port ${PORT}`);
-  console.log(`Environment: ${isProduction ? 'production' : 'development'}`);
+  logger.info(
+    {
+      port: PORT,
+      environment: isProduction ? 'production' : 'development',
+      pid: process.pid,
+      nodeVersion: process.version
+    },
+    `Server listening on port ${PORT}`
+  );
 });
+
+// Log successful startup
+logger.info({ pid: process.pid }, 'Server initialization complete');

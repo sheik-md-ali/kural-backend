@@ -18,8 +18,8 @@ npm ci
 echo "==> Building application"
 npm run build
 
-echo "==> Reloading PM2 process: ${PM2_PROCESS_NAME}"
-pm2 restart "${PM2_PROCESS_NAME}"
+echo "==> Reloading PM2 cluster via ecosystem.config.cjs"
+pm2 reload ecosystem.config.cjs --env production --update-env || pm2 start ecosystem.config.cjs --env production --update-env
 
 echo "==> Deployment complete"
 
