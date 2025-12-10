@@ -207,7 +207,7 @@ export const GlobalAnalytics = () => {
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Line type="monotone" dataKey="turnout" stroke="hsl(var(--primary))" strokeWidth={2} />
+                    <Line type="monotone" dataKey="turnout" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6', r: 5 }} activeDot={{ r: 7 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </Card>
@@ -221,7 +221,7 @@ export const GlobalAnalytics = () => {
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="surveys" fill="hsl(var(--success))" />
+                    <Bar dataKey="surveys" fill="#10b981" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </Card>

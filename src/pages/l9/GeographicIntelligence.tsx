@@ -49,8 +49,8 @@ const GeographicIntelligence = () => {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="performance" fill="hsl(var(--primary))" name="Performance Score" />
-                  <Bar dataKey="turnout" fill="hsl(var(--success))" name="Turnout %" />
+                  <Bar dataKey="performance" fill="#3b82f6" name="Performance Score" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="turnout" fill="#10b981" name="Turnout %" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -68,12 +68,12 @@ const GeographicIntelligence = () => {
                   <YAxis dataKey="completion" name="Completion %" />
                   <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                   <Legend />
-                  <Scatter name="Booths" data={boothStatus} fill="hsl(var(--primary))">
+                  <Scatter name="Booths" data={boothStatus} fill="#3b82f6">
                     {boothStatus.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={
-                        entry.status === 'critical' ? 'hsl(var(--destructive))' :
-                        entry.status === 'warning' ? 'hsl(var(--warning))' :
-                        'hsl(var(--success))'
+                        entry.status === 'critical' ? '#ef4444' :
+                        entry.status === 'warning' ? '#f59e0b' :
+                        '#10b981'
                       } />
                     ))}
                   </Scatter>

@@ -66,8 +66,8 @@ const ElectionDayOps = () => {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Area type="monotone" dataKey="turnout" stroke="hsl(var(--success))" fill="hsl(var(--success))" fillOpacity={0.6} name="Actual Turnout %" />
-                  <Area type="monotone" dataKey="expected" stroke="hsl(var(--muted))" fill="hsl(var(--muted))" fillOpacity={0.3} name="Expected %" />
+                  <Area type="monotone" dataKey="turnout" stroke="#10b981" fill="#10b981" fillOpacity={0.6} name="Actual Turnout %" />
+                  <Area type="monotone" dataKey="expected" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.3} name="Expected %" />
                 </AreaChart>
               </ResponsiveContainer>
             </CardContent>
@@ -85,8 +85,8 @@ const ElectionDayOps = () => {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="current" fill="hsl(var(--primary))" name="Current Turnout %" />
-                  <Bar dataKey="target" fill="hsl(var(--muted))" name="Target %" />
+                  <Bar dataKey="current" fill="#3b82f6" name="Current Turnout %" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="target" fill="#f59e0b" name="Target %" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>

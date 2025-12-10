@@ -171,7 +171,7 @@ export const ACComparison = () => {
     };
   });
 
-  const colors = ['hsl(var(--primary))', 'hsl(var(--success))', 'hsl(var(--warning))', 'hsl(var(--destructive))'];
+  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
   const handleExport = () => {
     const csvContent = [
@@ -339,7 +339,7 @@ export const ACComparison = () => {
                   <Tooltip />
                   <Legend />
                   {comparisonData.map((ac, index) => (
-                    <Bar key={ac.acNumber} dataKey={ac.name} fill={colors[index]} />
+                    <Bar key={ac.acNumber} dataKey={ac.name} fill={colors[index]} radius={[8, 8, 0, 0]} />
                   ))}
                 </BarChart>
               </ResponsiveContainer>

@@ -391,10 +391,20 @@ export function formatLocationDisplay(location: NormalizedLocation | null): stri
 
 /**
  * Get Google Maps URL for a location
+ * Note: External link only - maps on pages use Leaflet.js with OpenStreetMap tiles (free, no API key needed)
  */
 export function getGoogleMapsUrl(location: NormalizedLocation | null): string | null {
   if (!location) return null;
   return `https://www.google.com/maps?q=${location.latitude},${location.longitude}`;
+}
+
+/**
+ * Get OpenStreetMap URL for a location
+ * Alternative free mapping service without API key requirement
+ */
+export function getOpenStreetMapUrl(location: NormalizedLocation | null): string | null {
+  if (!location) return null;
+  return `https://www.openstreetmap.org/?mlat=${location.latitude}&mlon=${location.longitude}&zoom=16`;
 }
 
 // ============================================================================

@@ -69,7 +69,19 @@ const resourceAllocation = [
   { category: 'Event Management', allocated: 1500000, spent: 1125000, efficiency: 75 }
 ];
 
-const COLORS = ['hsl(var(--primary))', 'hsl(var(--secondary))', 'hsl(var(--accent))', 'hsl(var(--muted))'];
+// Vibrant color palette for charts
+const COLORS = [
+  '#3b82f6', // Blue
+  '#ef4444', // Red
+  '#10b981', // Green
+  '#f59e0b', // Amber
+  '#8b5cf6', // Purple
+  '#ec4899', // Pink
+  '#06b6d4', // Cyan
+  '#f97316', // Orange
+  '#14b8a6', // Teal
+  '#6366f1', // Indigo
+];
 
 export const WarRoom = () => {
   return (
@@ -159,8 +171,8 @@ export const WarRoom = () => {
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="count" fill="hsl(var(--primary))" name="Total Voters" />
-                    <Bar dataKey="targeted" fill="hsl(var(--secondary))" name="Targeted" />
+                    <Bar dataKey="count" fill="#3b82f6" name="Total Voters" radius={[8, 8, 0, 0]} />
+                    <Bar dataKey="targeted" fill="#10b981" name="Targeted" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </Card>
@@ -234,9 +246,9 @@ export const WarRoom = () => {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Area type="monotone" dataKey="positive" stackId="1" stroke="hsl(142, 76%, 36%)" fill="hsl(142, 76%, 46%)" />
-                  <Area type="monotone" dataKey="neutral" stackId="1" stroke="hsl(var(--muted))" fill="hsl(var(--muted-foreground))" />
-                  <Area type="monotone" dataKey="negative" stackId="1" stroke="hsl(0, 84%, 60%)" fill="hsl(0, 84%, 70%)" />
+                  <Area type="monotone" dataKey="positive" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.8} />
+                  <Area type="monotone" dataKey="neutral" stackId="1" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.8} />
+                  <Area type="monotone" dataKey="negative" stackId="1" stroke="#ef4444" fill="#ef4444" fillOpacity={0.8} />
                 </AreaChart>
               </ResponsiveContainer>
             </Card>
@@ -300,9 +312,9 @@ export const WarRoom = () => {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="completion" fill="hsl(var(--primary))" name="Completion %" />
-                  <Bar dataKey="sentiment" fill="hsl(var(--secondary))" name="Sentiment Score" />
-                  <Bar dataKey="turnout" fill="hsl(var(--accent))" name="Expected Turnout %" />
+                  <Bar dataKey="completion" fill="#3b82f6" name="Completion %" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="sentiment" fill="#8b5cf6" name="Sentiment Score" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="turnout" fill="#10b981" name="Expected Turnout %" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </Card>
