@@ -35,5 +35,26 @@ export default defineConfig(({ mode }) => {
         "@": path.resolve(__dirname, "./src"),
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // Vendor chunks - split large dependencies
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            'vendor-radix': [
+              '@radix-ui/react-dialog',
+              '@radix-ui/react-select',
+              '@radix-ui/react-tabs',
+              '@radix-ui/react-tooltip',
+              '@radix-ui/react-popover',
+              '@radix-ui/react-dropdown-menu',
+            ],
+            'vendor-charts': ['recharts'],
+            'vendor-forms': ['react-hook-form', 'zod', '@hookform/resolvers'],
+            'vendor-utils': ['date-fns', 'clsx', 'tailwind-merge'],
+          },
+        },
+      },
+    },
   };
 });
