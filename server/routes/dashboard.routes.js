@@ -7,8 +7,15 @@ import {
   aggregateVoters,
   findOneVoter,
 } from "../utils/voterCollection.js";
+import {
+  queryBoothAgentActivities,
+  queryAllBoothAgentActivities,
+  countBoothAgentActivities,
+  countAllBoothAgentActivities,
+} from "../utils/boothAgentActivityCollection.js";
 import { isAuthenticated, canAccessAC } from "../middleware/auth.js";
 import { getCache, setCache, cacheKeys, TTL } from "../utils/cache.js";
+import { AC_NAMES, normalizeLocation } from "../utils/universalAdapter.js";
 
 const router = express.Router();
 
@@ -85,9 +92,11 @@ router.get("/stats/:acId", async (req, res) => {
       .lean()
       .exec();
 
+    // Use AC_NAMES from universal adapter as fallback for consistent naming
     const acName =
       acMeta?.aci_name ??
       acMeta?.ac_name ??
+      AC_NAMES[acId] ??
       (identifierString && !hasNumericIdentifier ? identifierString : null);
     const acNumber =
       acMeta?.aci_num ??
@@ -168,6 +177,86 @@ router.get("/stats/:acId", async (req, res) => {
   } catch (error) {
     console.error("Error fetching dashboard stats:", error);
     return res.status(500).json({ message: "Failed to fetch dashboard statistics" });
+  }
+});
+
+// Booth Agent Activities API - fetch actual activity records from boothagentactivities_* collections
+router.get("/booth-agent-activities", async (req, res) => {
+  try {
+    await connectToDatabase();
+
+    const { acId, limit = 100, status } = req.query;
+    const numericLimit = Math.min(Number(limit) || 100, 500);
+
+    // Build query
+    const query = {};
+    if (status) {
+      query.status = status;
+    }
+
+    let activities = [];
+    let total = 0;
+
+    if (acId && acId !== 'all') {
+      const numericAcId = Number(acId);
+      if (!Number.isFinite(numericAcId)) {
+        return res.status(400).json({ success: false, message: "Invalid AC ID" });
+      }
+
+      // AC Isolation: Check if user can access this AC
+      if (!canAccessAC(req.user, numericAcId)) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You do not have permission to view this AC's data."
+        });
+      }
+
+      activities = await queryBoothAgentActivities(numericAcId, query, {
+        sort: { loginTime: -1 },
+        limit: numericLimit,
+      });
+      total = await countBoothAgentActivities(numericAcId, query);
+    } else {
+      // L0 users can query all ACs
+      if (req.user.role !== 'L0') {
+        return res.status(403).json({
+          success: false,
+          message: "Only L0 users can query all ACs"
+        });
+      }
+
+      activities = await queryAllBoothAgentActivities(query, {
+        sort: { loginTime: -1 },
+        limit: numericLimit,
+      });
+      total = await countAllBoothAgentActivities(query);
+    }
+
+    // Normalize location data and add AC name
+    const normalizedActivities = activities.map(activity => {
+      const acIdValue = activity.aci_id || activity._acId;
+      return {
+        ...activity,
+        id: activity._id?.toString(),
+        acId: acIdValue,
+        aci_name: activity.aci_name || AC_NAMES[acIdValue] || null,
+        location: activity.location ? normalizeLocation(activity.location) : null,
+      };
+    });
+
+    return res.json({
+      success: true,
+      activities: normalizedActivities,
+      total,
+      count: normalizedActivities.length,
+    });
+  } catch (error) {
+    console.error("Error fetching booth agent activities:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch booth agent activities",
+      error: error.message
+    });
   }
 });
 

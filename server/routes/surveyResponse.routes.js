@@ -10,6 +10,10 @@ import {
   queryAllSurveyResponses,
   countAllSurveyResponses
 } from "../utils/surveyResponseCollection.js";
+import {
+  normalizeSurveyResponse,
+  enrichAcFields
+} from "../utils/universalAdapter.js";
 import Survey from "../models/Survey.js";
 import { isAuthenticated, canAccessAC } from "../middleware/auth.js";
 
@@ -79,8 +83,11 @@ router.get("/", async (req, res) => {
     let boothNamesFromAC = [];
     const acId = ac && ac !== 'all' ? parseInt(ac) : null;
 
-    // Filter by AC - use booth names from voters collection
+    // When AC is specified, we'll query the AC-specific collection directly
+    // No need to filter by booth names - the collection already contains only that AC's data
     if (acId) {
+      console.log(`Querying AC-specific collection: surveyresponses_${acId}`);
+      // Get booth names for booth filter dropdown support
       try {
         const voterBooths = await aggregateVoters(acId, [
           { $match: {} },
@@ -88,11 +95,6 @@ router.get("/", async (req, res) => {
         ]);
         boothNamesFromAC = voterBooths.map(b => b._id).filter(Boolean);
         console.log(`Found ${boothNamesFromAC.length} unique booth names for AC ${acId}`);
-
-        // For AC-specific collection, we use boothname field (aligned with voters)
-        if (boothNamesFromAC.length > 0) {
-          query.boothname = { $in: boothNamesFromAC };
-        }
       } catch (voterError) {
         console.error("Error getting booth names from voter data:", voterError);
       }
@@ -211,28 +213,31 @@ router.get("/", async (req, res) => {
       responses = responses.slice(skip, skip + limitNum);
     }
 
-    // Populate question text for all responses
+    // Normalize and process responses using universal adapter
     const processedResponses = await Promise.all(responses.map(async (response) => {
-      const surveyId = response.surveyId || response.formId;
-      const answers = response.answers || response.responses || [];
+      // Use universal adapter to normalize the response
+      const normalized = normalizeSurveyResponse(response, { enrichAc: true, enrichBooth: true });
+
+      const surveyId = normalized.formId;
+      const answers = normalized.answers || [];
       const populatedAnswers = await populateQuestionText(answers, surveyId);
 
       return {
-        id: response._id,
+        id: normalized._id,
         survey_id: surveyId || 'N/A',
-        respondent_name: response.voterName || response.respondentName || 'N/A',
-        voter_id: response.respondentVoterId || response.voterId || response.voterID || 'N/A',
-        voterID: response.respondentVoterId || response.voterID || '',
-        voterId: response.respondentVoterId || response.voterId || response.voterID || 'N/A',
-        // Booth fields - prioritize new structure, fallback to legacy
-        booth: response.boothname || response.booth || 'N/A',
-        booth_id: response.booth_id || response.boothCode || null,
-        boothno: response.boothno || null,
-        // AC fields
-        ac_id: response.aci_id || response.acId || response.aci_num || response._acId || null,
-        aci_name: response.aci_name || null,
-        survey_date: response.createdAt || response.submittedAt || new Date(),
-        status: response.isComplete ? 'Completed' : (response.status || 'Pending'),
+        respondent_name: normalized.respondentName || 'N/A',
+        voter_id: normalized.respondentVoterId || 'N/A',
+        voterID: normalized.respondentVoterId || '',
+        voterId: normalized.respondentVoterId || 'N/A',
+        // Booth fields - from normalized data
+        booth: normalized.boothname || 'N/A',
+        booth_id: normalized.booth_id || null,
+        boothno: normalized.boothno || null,
+        // AC fields - from normalized data
+        ac_id: normalized.aci_id || null,
+        aci_name: normalized.aci_name || null,
+        survey_date: normalized.submittedAt || new Date(),
+        status: normalized.isComplete ? 'Completed' : (normalized.status || 'Pending'),
         answers: populatedAnswers
       };
     }));
@@ -309,28 +314,31 @@ router.get("/:acId", async (req, res) => {
 
     const totalResponses = await countSurveyResponses(acId, query);
 
-    // Populate question text for all responses
+    // Normalize and process responses using universal adapter
     const processedResponses = await Promise.all(responses.map(async (response) => {
-      const surveyId = response.surveyId || response.formId;
-      const answers = response.answers || response.responses || [];
+      // Use universal adapter to normalize the response
+      const normalized = normalizeSurveyResponse(response, { enrichAc: true, enrichBooth: true });
+
+      const surveyId = normalized.formId;
+      const answers = normalized.answers || [];
       const populatedAnswers = await populateQuestionText(answers, surveyId);
 
       return {
-        id: response._id,
+        id: normalized._id,
         survey_id: surveyId || 'N/A',
-        respondent_name: response.voterName || response.respondentName || 'N/A',
-        voter_id: response.voterId || 'N/A',
-        voterID: response.voterID || '',
-        voterId: response.voterId || response.voterID || 'N/A',
-        // Booth fields - prioritize new structure, fallback to legacy
-        booth: response.boothname || response.booth || 'N/A',
-        booth_id: response.booth_id || response.boothCode || null,
-        boothno: response.boothno || null,
-        // AC fields
-        ac_id: acId,
-        aci_name: response.aci_name || null,
-        survey_date: response.createdAt || response.submittedAt || new Date(),
-        status: response.status || 'Completed',
+        respondent_name: normalized.respondentName || 'N/A',
+        voter_id: normalized.respondentVoterId || 'N/A',
+        voterID: normalized.respondentVoterId || '',
+        voterId: normalized.respondentVoterId || 'N/A',
+        // Booth fields - from normalized data
+        booth: normalized.boothname || 'N/A',
+        booth_id: normalized.booth_id || null,
+        boothno: normalized.boothno || null,
+        // AC fields - from normalized data (use acId param as fallback)
+        ac_id: normalized.aci_id || acId,
+        aci_name: normalized.aci_name || null,
+        survey_date: normalized.submittedAt || new Date(),
+        status: normalized.isComplete ? 'Completed' : (normalized.status || 'Pending'),
         answers: populatedAnswers
       };
     }));

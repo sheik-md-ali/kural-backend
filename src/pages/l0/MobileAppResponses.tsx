@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -39,7 +42,14 @@ import {
   RefreshCw,
   Search,
   User,
+  BarChart3,
+  List,
+  EyeOff,
 } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
+
+// Chart colors
+const CHART_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
 const ITEMS_PER_PAGE = 25;
 
@@ -112,12 +122,29 @@ const AnswerValue = ({ value }: { value: unknown }) => {
   return <span className="text-sm text-muted-foreground break-words">{String(value)}</span>;
 };
 
+// Helper to check if a value is NA/empty
+const isNAValue = (value: unknown): boolean => {
+  if (value === null || value === undefined) return true;
+  if (typeof value === 'string' && (value.trim() === '' || value.toLowerCase() === 'na' || value.toLowerCase() === 'n/a')) return true;
+  return false;
+};
+
+// Answer distribution chart data type
+interface AnswerDistribution {
+  questionId: string;
+  prompt: string;
+  data: { name: string; value: number; percent: number }[];
+  totalResponses: number;
+  naCount: number;
+}
+
 export const MobileAppResponses = () => {
   const { toast } = useToast();
   const [responses, setResponses] = useState<MobileAppResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedAC, setSelectedAC] = useState<string>('all');
+  // Default to AC 111 for auto-show behavior
+  const [selectedAC, setSelectedAC] = useState<string>('111');
   const [selectedBooth, setSelectedBooth] = useState<string>('all');
   const [booths, setBooths] = useState<BoothOption[]>([]);
   const [loadingBooths, setLoadingBooths] = useState(false);
@@ -130,6 +157,8 @@ export const MobileAppResponses = () => {
   const [selectedResponse, setSelectedResponse] = useState<MobileAppResponse | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  const [hideNA, setHideNA] = useState(true);
+  const [activeTab, setActiveTab] = useState<string>('list');
 
   // Fetch booths when AC changes
   useEffect(() => {
@@ -257,92 +286,177 @@ export const MobileAppResponses = () => {
 
   const totalAnswers = useMemo(() => responses.reduce((sum, resp) => sum + resp.answers.length, 0), [responses]);
 
+  // Compute answer distributions for charts
+  const answerDistributions = useMemo((): AnswerDistribution[] => {
+    const questionMap = new Map<string, { prompt: string; answers: Map<string, number>; naCount: number }>();
+
+    responses.forEach((response) => {
+      response.answers.forEach((answer) => {
+        const key = answer.questionId || answer.prompt;
+        if (!questionMap.has(key)) {
+          questionMap.set(key, { prompt: answer.prompt, answers: new Map(), naCount: 0 });
+        }
+        const q = questionMap.get(key)!;
+
+        const answerStr = isNAValue(answer.value) ? '__NA__' : String(answer.value);
+        if (answerStr === '__NA__') {
+          q.naCount++;
+        } else {
+          q.answers.set(answerStr, (q.answers.get(answerStr) || 0) + 1);
+        }
+      });
+    });
+
+    const distributions: AnswerDistribution[] = [];
+    questionMap.forEach((value, questionId) => {
+      const totalWithData = Array.from(value.answers.values()).reduce((a, b) => a + b, 0);
+      const total = totalWithData + value.naCount;
+      const data: { name: string; value: number; percent: number }[] = [];
+
+      value.answers.forEach((count, answerValue) => {
+        data.push({
+          name: answerValue.length > 20 ? answerValue.slice(0, 20) + '...' : answerValue,
+          value: count,
+          percent: total > 0 ? Math.round((count / total) * 100) : 0,
+        });
+      });
+
+      // Add NA if not hidden
+      if (!hideNA && value.naCount > 0) {
+        data.push({
+          name: 'N/A',
+          value: value.naCount,
+          percent: total > 0 ? Math.round((value.naCount / total) * 100) : 0,
+        });
+      }
+
+      // Sort by count descending
+      data.sort((a, b) => b.value - a.value);
+
+      distributions.push({
+        questionId,
+        prompt: value.prompt,
+        data,
+        totalResponses: total,
+        naCount: value.naCount,
+      });
+    });
+
+    return distributions;
+  }, [responses, hideNA]);
+
+  // Filter responses for display (remove NA answers if hideNA is true)
+  const filteredResponsesForDisplay = useMemo(() => {
+    if (!hideNA) return responses;
+    return responses.map((response) => ({
+      ...response,
+      answers: response.answers.filter((answer) => !isNAValue(answer.value)),
+    }));
+  }, [responses, hideNA]);
+
   return (
     <DashboardLayout>
-      <div className="max-w-6xl mx-auto space-y-6 pb-10">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="max-w-6xl mx-auto space-y-4 pb-10">
+        {/* Compact Header with inline stats */}
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm uppercase font-semibold tracking-wide text-primary/80">Mobile App</p>
-            <h1 className="text-3xl font-bold mt-1">Mobile App Responses</h1>
-            <p className="text-muted-foreground">
-              Review incoming submissions from the field app in real time.
+            <h1 className="text-2xl font-bold">Mobile App Responses</h1>
+            <p className="text-sm text-muted-foreground">
+              Real-time submissions from the field app
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleRefresh} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          <div className="flex items-center gap-4">
+            {/* Compact inline stats */}
+            <div className="hidden md:flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted rounded-md">
+                <span className="text-muted-foreground">Responses:</span>
+                <span className="font-semibold">{pagination.total}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted rounded-md">
+                <span className="text-muted-foreground">Answers:</span>
+                <span className="font-semibold">{totalAnswers}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted rounded-md">
+                <span className="text-muted-foreground">Synced:</span>
+                <span className="font-semibold text-xs">
+                  {lastRefreshedAt ? new Date(lastRefreshedAt).toLocaleTimeString() : 'Never'}
+                </span>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Responses</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold">{pagination.total}</p>
-              <p className="text-xs text-muted-foreground mt-1">Across all time</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Answers Captured</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold">{totalAnswers}</p>
-              <p className="text-xs text-muted-foreground mt-1">Across visible responses</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Last Synced</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold text-balance text-left">
-                {lastRefreshedAt ? formatDateTime(lastRefreshedAt) : 'Not yet synced'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">Local time</p>
-            </CardContent>
-          </Card>
+        {/* Mobile-only stats row */}
+        <div className="flex md:hidden items-center gap-2 text-xs overflow-x-auto pb-1">
+          <div className="flex items-center gap-1 px-2 py-1 bg-muted rounded shrink-0">
+            <span className="text-muted-foreground">Responses:</span>
+            <span className="font-semibold">{pagination.total}</span>
+          </div>
+          <div className="flex items-center gap-1 px-2 py-1 bg-muted rounded shrink-0">
+            <span className="text-muted-foreground">Answers:</span>
+            <span className="font-semibold">{totalAnswers}</span>
+          </div>
+          <div className="flex items-center gap-1 px-2 py-1 bg-muted rounded shrink-0">
+            <span className="text-muted-foreground">Synced:</span>
+            <span className="font-semibold">
+              {lastRefreshedAt ? new Date(lastRefreshedAt).toLocaleTimeString() : 'Never'}
+            </span>
+          </div>
         </div>
 
         <Card className="p-6 space-y-4">
           <div className="flex flex-col gap-4">
             {/* Filter Row */}
-            <div className="flex flex-col gap-4 md:flex-row md:items-center">
-              <Select value={selectedAC} onValueChange={handleACChange}>
-                <SelectTrigger className="w-full md:w-[250px]">
-                  <Filter className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Select AC" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Constituencies</SelectItem>
-                  {CONSTITUENCIES.map((ac) => (
-                    <SelectItem key={ac.number} value={String(ac.number)}>
-                      {ac.number} - {ac.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={selectedBooth}
-                onValueChange={handleBoothChange}
-                disabled={selectedAC === 'all' || loadingBooths}
-              >
-                <SelectTrigger className="w-full md:w-[300px]">
-                  <SelectValue placeholder={loadingBooths ? 'Loading booths...' : 'Select Booth'} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Booths</SelectItem>
-                  {booths.map((booth) => (
-                    <SelectItem key={booth.booth_id || booth.boothNo} value={booth.booth_id || String(booth.boothNo)}>
-                      {booth.boothName || `Booth ${booth.boothNo}`} ({booth.booth_id?.split('-')[0] || `BOOTH${booth.boothNo}`})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center">
+                <Select value={selectedAC} onValueChange={handleACChange}>
+                  <SelectTrigger className="w-full md:w-[250px]">
+                    <Filter className="mr-2 h-4 w-4" />
+                    <SelectValue placeholder="Select AC" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Constituencies</SelectItem>
+                    {CONSTITUENCIES.map((ac) => (
+                      <SelectItem key={ac.number} value={String(ac.number)}>
+                        {ac.number} - {ac.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={selectedBooth}
+                  onValueChange={handleBoothChange}
+                  disabled={selectedAC === 'all' || loadingBooths}
+                >
+                  <SelectTrigger className="w-full md:w-[300px]">
+                    <SelectValue placeholder={loadingBooths ? 'Loading booths...' : 'Select Booth'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Booths</SelectItem>
+                    {booths.map((booth) => (
+                      <SelectItem key={booth.booth_id || booth.boothNo} value={booth.booth_id || String(booth.boothNo)}>
+                        {booth.boothName || `Booth ${booth.boothNo}`} ({booth.booth_id?.split('-')[0] || `BOOTH${booth.boothNo}`})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* Hide NA Toggle */}
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="hide-na"
+                  checked={hideNA}
+                  onCheckedChange={setHideNA}
+                />
+                <Label htmlFor="hide-na" className="text-sm flex items-center gap-1 cursor-pointer">
+                  <EyeOff className="h-4 w-4" />
+                  Hide N/A
+                </Label>
+              </div>
             </div>
             {/* Search Row */}
             <div className="flex flex-col gap-4 md:flex-row md:items-center">
@@ -366,115 +480,207 @@ export const MobileAppResponses = () => {
 
           <Separator />
 
-          {loading && responses.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p className="text-muted-foreground">Loading mobile app responses…</p>
-            </div>
-          ) : responses.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
-              <ClipboardList className="h-10 w-10 text-muted-foreground/50" />
-              <p className="font-medium">No responses yet</p>
-              <p className="text-sm text-muted-foreground">
-                Once respondents submit answers through the mobile app, they will appear here.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {responses.map((response) => {
-                const previewAnswers = response.answers.slice(0, 3);
-                const remainingAnswers = response.answers.length - previewAnswers.length;
-                const metadataEntries = response.metadata ? Object.entries(response.metadata).slice(0, 4) : [];
+          {/* Tabs: List and Charts View */}
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="list" className="flex items-center gap-2">
+                <List className="h-4 w-4" />
+                Responses
+              </TabsTrigger>
+              <TabsTrigger value="charts" className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Charts ({answerDistributions.length})
+              </TabsTrigger>
+            </TabsList>
 
-                return (
-                  <Card key={response.id} className="border border-border/60 shadow-sm">
-                    <div className="p-5 flex flex-col gap-4">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-xl font-semibold flex items-center gap-2">
-                              <User className="h-5 w-5 text-primary" />
-                              {response.respondentName || 'Unnamed respondent'}
-                            </h3>
-                            {response.status && (
-                              <Badge variant="secondary" className="text-xs">
-                                {response.status}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                            {response.phoneNumber && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="h-4 w-4" />
-                                {response.phoneNumber}
-                              </span>
-                            )}
-                            {response.voterId && (
-                              <span className="flex items-center gap-1">
-                                <ClipboardList className="h-4 w-4" />
-                                {response.voterId}
-                              </span>
-                            )}
-                            {response.submittedAt && (
-                              <span className="flex items-center gap-1">
-                                <CalendarClock className="h-4 w-4" />
-                                {formatDateTime(response.submittedAt)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => openResponseDialog(response)}>
-                            <Eye className="h-4 w-4 mr-2" />
-                            View Details
-                          </Button>
-                        </div>
-                      </div>
-
-                      {metadataEntries.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {metadataEntries.map(([key, value]) => (
-                            <Badge key={key} variant="outline" className="text-xs gap-1">
-                              <MapPin className="h-3 w-3" />
-                              <span className="capitalize">{key}:</span>
-                              <span className="font-semibold">{String(value)}</span>
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <Separator />
-                    <div className="p-5 space-y-3 bg-muted/30">
-                      {previewAnswers.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No answers captured.</p>
+            {/* Charts View */}
+            <TabsContent value="charts" className="mt-4">
+              {loading && responses.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-muted-foreground">Loading response data…</p>
+                </div>
+              ) : answerDistributions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                  <BarChart3 className="h-10 w-10 text-muted-foreground/50" />
+                  <p className="font-medium">No data for charts</p>
+                  <p className="text-sm text-muted-foreground">
+                    Select an AC with responses to view answer distributions.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {answerDistributions.map((dist) => (
+                    <Card key={dist.questionId} className="p-4">
+                      <h4 className="font-semibold text-sm mb-2 line-clamp-2">{dist.prompt}</h4>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        {dist.totalResponses} responses{dist.naCount > 0 && !hideNA && ` (${dist.naCount} N/A)`}
+                      </p>
+                      {dist.data.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-8">No data available</p>
                       ) : (
-                        previewAnswers.map((answer) => (
-                          <div key={answer.id} className="rounded-lg bg-background border p-3">
-                            <p className="text-sm font-medium">{answer.prompt}</p>
-                            <AnswerValue value={answer.value} />
+                        <div className="h-[200px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={dist.data}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={40}
+                                outerRadius={70}
+                                dataKey="value"
+                                label={({ name, percent }) => `${name}: ${percent}%`}
+                                labelLine={false}
+                              >
+                                {dist.data.map((_, index) => (
+                                  <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                                ))}
+                              </Pie>
+                              <Tooltip
+                                formatter={(value: number, name: string) => [`${value} (${dist.data.find(d => d.name === name)?.percent || 0}%)`, name]}
+                              />
+                              <Legend />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+                      {/* Answer breakdown */}
+                      <div className="mt-3 space-y-1">
+                        {dist.data.slice(0, 5).map((item, idx) => (
+                          <div key={item.name} className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: CHART_COLORS[idx % CHART_COLORS.length] }}
+                              />
+                              <span className="truncate max-w-[150px]">{item.name}</span>
+                            </div>
+                            <span className="font-medium">{item.value} ({item.percent}%)</span>
                           </div>
-                        ))
-                      )}
-                      {remainingAnswers > 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          +{remainingAnswers} more answer{remainingAnswers > 1 ? 's' : ''}
-                        </p>
-                      )}
-                    </div>
-                  </Card>
-                );
-              })}
-
-              {pagination.hasMore && (
-                <div className="flex justify-center">
-                  <Button onClick={handleLoadMore} disabled={loading}>
-                    {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Load more responses
-                  </Button>
+                        ))}
+                        {dist.data.length > 5 && (
+                          <p className="text-xs text-muted-foreground">+{dist.data.length - 5} more options</p>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
                 </div>
               )}
-            </div>
-          )}
+            </TabsContent>
+
+            {/* List View */}
+            <TabsContent value="list" className="mt-4">
+              {loading && filteredResponsesForDisplay.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-muted-foreground">Loading mobile app responses…</p>
+                </div>
+              ) : filteredResponsesForDisplay.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                  <ClipboardList className="h-10 w-10 text-muted-foreground/50" />
+                  <p className="font-medium">No responses yet</p>
+                  <p className="text-sm text-muted-foreground">
+                    Once respondents submit answers through the mobile app, they will appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredResponsesForDisplay.map((response) => {
+                    const previewAnswers = response.answers.slice(0, 3);
+                    const remainingAnswers = response.answers.length - previewAnswers.length;
+                    const metadataEntries = response.metadata ? Object.entries(response.metadata).slice(0, 4) : [];
+
+                    return (
+                      <Card key={response.id} className="border border-border/60 shadow-sm">
+                        <div className="p-5 flex flex-col gap-4">
+                          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="text-xl font-semibold flex items-center gap-2">
+                                  <User className="h-5 w-5 text-primary" />
+                                  {response.respondentName || 'Unnamed respondent'}
+                                </h3>
+                                {response.status && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    {response.status}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                                {response.phoneNumber && (
+                                  <span className="flex items-center gap-1">
+                                    <Phone className="h-4 w-4" />
+                                    {response.phoneNumber}
+                                  </span>
+                                )}
+                                {response.voterId && (
+                                  <span className="flex items-center gap-1">
+                                    <ClipboardList className="h-4 w-4" />
+                                    {response.voterId}
+                                  </span>
+                                )}
+                                {response.submittedAt && (
+                                  <span className="flex items-center gap-1">
+                                    <CalendarClock className="h-4 w-4" />
+                                    {formatDateTime(response.submittedAt)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button variant="outline" size="sm" onClick={() => openResponseDialog(response)}>
+                                <Eye className="h-4 w-4 mr-2" />
+                                View Details
+                              </Button>
+                            </div>
+                          </div>
+
+                          {metadataEntries.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {metadataEntries.map(([key, value]) => (
+                                <Badge key={key} variant="outline" className="text-xs gap-1">
+                                  <MapPin className="h-3 w-3" />
+                                  <span className="capitalize">{key}:</span>
+                                  <span className="font-semibold">{String(value)}</span>
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <Separator />
+                        <div className="p-5 space-y-3 bg-muted/30">
+                          {previewAnswers.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">No answers captured.</p>
+                          ) : (
+                            previewAnswers.map((answer) => (
+                              <div key={answer.id} className="rounded-lg bg-background border p-3">
+                                <p className="text-sm font-medium">{answer.prompt}</p>
+                                <AnswerValue value={answer.value} />
+                              </div>
+                            ))
+                          )}
+                          {remainingAnswers > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              +{remainingAnswers} more answer{remainingAnswers > 1 ? 's' : ''}
+                            </p>
+                          )}
+                        </div>
+                      </Card>
+                    );
+                  })}
+
+                  {pagination.hasMore && (
+                    <div className="flex justify-center">
+                      <Button onClick={handleLoadMore} disabled={loading}>
+                        {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        Load more responses
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </Card>
 
         <Dialog open={isDialogOpen} onOpenChange={closeDialog}>

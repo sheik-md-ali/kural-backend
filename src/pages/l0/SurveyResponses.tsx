@@ -2,6 +2,7 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -14,7 +15,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { api } from '@/lib/api';
 import { fetchSurvey, Survey } from '@/lib/surveys';
 import { useState, useEffect } from 'react';
-import { Search, Download, RefreshCw, Eye, FileText, User, Calendar, CheckCircle2, Hash, Building2, Filter } from 'lucide-react';
+import { Search, Download, RefreshCw, Eye, FileText, User, Calendar, CheckCircle2, Hash, Building2, Filter, MapPin } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -30,17 +31,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { CONSTITUENCIES } from '@/constants/constituencies';
-
-interface SurveyResponse {
-  id: string;
-  survey_id: string;
-  respondent_name: string;
-  voter_id: string;
-  booth: string;
-  survey_date: string;
-  status: string;
-  answers: any;
-}
+import type { NormalizedSurveyResponse, SurveyAnswer } from '@/utils/normalizedTypes';
+import {
+  normalizeSurveyResponse,
+  formatDateTime,
+  formatBoothDisplay,
+  getAcName,
+  safeString,
+} from '@/utils/universalMappers';
 
 interface Pagination {
   page: number;
@@ -58,7 +56,7 @@ interface Booth {
 
 export const SurveyResponses = () => {
   const { toast } = useToast();
-  const [responses, setResponses] = useState<SurveyResponse[]>([]);
+  const [responses, setResponses] = useState<NormalizedSurveyResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
@@ -72,7 +70,7 @@ export const SurveyResponses = () => {
   const [surveyFilter, setSurveyFilter] = useState<string>('all');
   const [booths, setBooths] = useState<Booth[]>([]);
   const [loadingBooths, setLoadingBooths] = useState(false);
-  const [selectedResponse, setSelectedResponse] = useState<SurveyResponse | null>(null);
+  const [selectedResponse, setSelectedResponse] = useState<NormalizedSurveyResponse | null>(null);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [surveyQuestions, setSurveyQuestions] = useState<Survey | null>(null);
   const [loadingSurvey, setLoadingSurvey] = useState(false);
@@ -129,7 +127,9 @@ export const SurveyResponses = () => {
       }
 
       const data = await api.get(`/survey-responses?${params.toString()}`);
-      setResponses(data.responses || []);
+      // Normalize responses using universal mapper
+      const normalizedResponses = (data.responses || []).map((r: any) => normalizeSurveyResponse(r));
+      setResponses(normalizedResponses);
       setPagination(prev => ({
         ...prev,
         total: data.pagination?.total || 0,
@@ -152,7 +152,7 @@ export const SurveyResponses = () => {
     fetchResponses();
   };
 
-  const handleViewDetails = async (response: SurveyResponse) => {
+  const handleViewDetails = async (response: NormalizedSurveyResponse) => {
     setSelectedResponse(response);
     setIsDetailDialogOpen(true);
     
@@ -214,19 +214,21 @@ export const SurveyResponses = () => {
     });
   };
 
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return dateString;
-    }
-  };
+  // Loading skeleton component
+  const TableSkeleton = () => (
+    <div className="space-y-3">
+      {[...Array(5)].map((_, i) => (
+        <div key={i} className="flex items-center space-x-4 p-4">
+          <Skeleton className="h-4 w-[200px]" />
+          <Skeleton className="h-4 w-[150px]" />
+          <Skeleton className="h-4 w-[100px]" />
+          <Skeleton className="h-4 w-[150px]" />
+          <Skeleton className="h-4 w-[100px]" />
+          <Skeleton className="h-4 w-[80px]" />
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <DashboardLayout>
@@ -318,10 +320,7 @@ export const SurveyResponses = () => {
 
             {/* Table */}
             {loading ? (
-              <div className="text-center py-8">
-                <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
-                <p className="text-muted-foreground">Loading survey responses...</p>
-              </div>
+              <TableSkeleton />
             ) : responses.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-muted-foreground">No survey responses found</p>
@@ -336,6 +335,7 @@ export const SurveyResponses = () => {
                         <TableHead>Respondent Name</TableHead>
                         <TableHead>Voter ID</TableHead>
                         <TableHead>Booth</TableHead>
+                        <TableHead>AC</TableHead>
                         <TableHead>Survey Date</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -344,16 +344,35 @@ export const SurveyResponses = () => {
                     <TableBody>
                       {responses.map((response) => (
                         <TableRow key={response.id}>
-                          <TableCell className="font-medium">
-                            {response.survey_id}
+                          <TableCell className="font-medium font-mono text-xs">
+                            {safeString(response.survey_id, 'N/A').slice(0, 8)}...
                           </TableCell>
-                          <TableCell>{response.respondent_name}</TableCell>
-                          <TableCell>{response.voter_id}</TableCell>
-                          <TableCell>{response.booth}</TableCell>
-                          <TableCell>{formatDate(response.survey_date)}</TableCell>
+                          <TableCell className="font-medium">
+                            {safeString(response.respondent_name)}
+                          </TableCell>
+                          <TableCell className="font-mono text-sm">
+                            {safeString(response.voter_id)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{formatBoothDisplay(response.boothname, response.boothno, response.booth_id)}</span>
+                              {response.boothno && response.boothname && (
+                                <span className="text-xs text-muted-foreground">{response.boothno}</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium">AC {response.ac_id || 'N/A'}</span>
+                              {response.aci_name && (
+                                <span className="text-xs text-muted-foreground">{response.aci_name}</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>{formatDateTime(response.survey_date)}</TableCell>
                           <TableCell>
                             <span
-                              className={`px-2 py-1 rounded-full text-xs ${
+                              className={`px-2 py-1 rounded-full text-xs font-medium ${
                                 response.status === 'Completed'
                                   ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                                   : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
@@ -444,35 +463,48 @@ export const SurveyResponses = () => {
                       <FileText className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-muted-foreground mb-1">Survey ID</p>
-                        <p className="text-sm font-semibold break-all">{selectedResponse.survey_id}</p>
+                        <p className="text-sm font-semibold break-all font-mono">{safeString(selectedResponse.survey_id)}</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
                       <User className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-muted-foreground mb-1">Respondent Name</p>
-                        <p className="text-sm font-semibold">{selectedResponse.respondent_name}</p>
+                        <p className="text-sm font-semibold">{safeString(selectedResponse.respondent_name)}</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
                       <Hash className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-muted-foreground mb-1">Voter ID</p>
-                        <p className="text-sm font-semibold">{selectedResponse.voter_id}</p>
+                        <p className="text-sm font-semibold font-mono">{safeString(selectedResponse.voter_id)}</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
                       <Building2 className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-muted-foreground mb-1">Booth</p>
-                        <p className="text-sm font-semibold">{selectedResponse.booth}</p>
+                        <p className="text-sm font-semibold">{formatBoothDisplay(selectedResponse.boothname, selectedResponse.boothno, selectedResponse.booth_id)}</p>
+                        {selectedResponse.booth_id && (
+                          <p className="text-xs text-muted-foreground font-mono">{selectedResponse.booth_id}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
+                      <MapPin className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-muted-foreground mb-1">Assembly Constituency</p>
+                        <p className="text-sm font-semibold">AC {selectedResponse.ac_id || 'N/A'}</p>
+                        {selectedResponse.aci_name && (
+                          <p className="text-xs text-muted-foreground">{selectedResponse.aci_name}</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
                       <Calendar className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-muted-foreground mb-1">Survey Date</p>
-                        <p className="text-sm font-semibold">{formatDate(selectedResponse.survey_date)}</p>
+                        <p className="text-sm font-semibold">{formatDateTime(selectedResponse.survey_date)}</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">

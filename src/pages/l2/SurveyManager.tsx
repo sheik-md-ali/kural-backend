@@ -2,7 +2,8 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { FileCheck, Filter, Eye, Loader2 } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { FileCheck, Filter, Eye, Loader2, Building2, MapPin, Calendar } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEffect, useState, useCallback } from 'react';
 import { SurveyDetailDrawer } from '@/components/SurveyDetailDrawer';
@@ -10,34 +11,49 @@ import { useToast } from '@/components/ui/use-toast';
 import { fetchSurveys } from '@/lib/surveys';
 import API_BASE_URL from '@/lib/api';
 import { useBooths, getBoothLabel } from '@/hooks/use-booths';
+import type { NormalizedSurveyResponse } from '@/utils/normalizedTypes';
+import {
+  normalizeSurveyResponse,
+  formatDateTime,
+  formatBoothDisplay,
+  safeString,
+} from '@/utils/universalMappers';
 
-interface SurveyResponse {
-  id: string;
-  survey_id: string;
-  respondent_name: string;
-  voter_id: string;
-  voterId: string;
-  booth: string;
-  booth_id: string | null;
-  boothno: string | null;
-  ac_id: number | null;
-  survey_date: string;
-  status: string;
-  answers: any[];
-}
+// Loading skeleton
+const ResponseSkeleton = () => (
+  <div className="space-y-4">
+    {[...Array(3)].map((_, i) => (
+      <Card key={i} className="p-6">
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-5 w-5 rounded-full" />
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+          <div className="grid grid-cols-4 gap-4">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-full" />
+          </div>
+        </div>
+      </Card>
+    ))}
+  </div>
+);
 
 export const SurveyManager = () => {
   const { user } = useAuth();
   const acNumber = user?.assignedAC || 119;
   const acName = user?.aciName || 'Assembly Constituency';
   const { toast } = useToast();
-  const [selectedSurvey, setSelectedSurvey] = useState<any>(null);
+  const [selectedSurvey, setSelectedSurvey] = useState<NormalizedSurveyResponse | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [formFilter, setFormFilter] = useState<string>('all');
   const [boothFilter, setBoothFilter] = useState<string>('all');
   const [assignedForms, setAssignedForms] = useState<Array<{ id: string; name: string }>>([]);
   const [isLoadingForms, setIsLoadingForms] = useState(false);
-  const [surveyResponses, setSurveyResponses] = useState<SurveyResponse[]>([]);
+  const [surveyResponses, setSurveyResponses] = useState<NormalizedSurveyResponse[]>([]);
   const [isLoadingResponses, setIsLoadingResponses] = useState(false);
 
   // Use centralized booth fetching hook
@@ -68,7 +84,9 @@ export const SurveyManager = () => {
       }
 
       const data = await response.json();
-      setSurveyResponses(data.responses || []);
+      // Normalize responses using universal mapper
+      const normalizedResponses = (data.responses || []).map((r: any) => normalizeSurveyResponse(r));
+      setSurveyResponses(normalizedResponses);
     } catch (error) {
       console.error('Failed to load survey responses', error);
       toast({
@@ -119,20 +137,7 @@ export const SurveyManager = () => {
     fetchSurveyResponses();
   };
 
-  // Format date for display
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleDateString('en-IN', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateString;
-    }
-  };
-
-  const handleViewDetails = (survey: SurveyResponse) => {
+  const handleViewDetails = (survey: NormalizedSurveyResponse) => {
     setSelectedSurvey(survey);
     setIsDrawerOpen(true);
   };
@@ -196,39 +201,58 @@ export const SurveyManager = () => {
 
         <div className="space-y-4">
           {isLoadingResponses ? (
-            <Card className="p-8 text-center">
-              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-              <p className="text-muted-foreground">Loading survey responses...</p>
-            </Card>
+            <ResponseSkeleton />
           ) : surveyResponses.length > 0 ? (
             surveyResponses.map((survey) => (
-              <Card key={survey.id} className="p-6">
+              <Card key={survey.id} className="p-6 hover:shadow-lg transition-shadow">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <div className="flex items-center space-x-3 mb-3">
-                      <FileCheck className="h-5 w-5 text-success" />
-                      <h3 className="text-lg font-semibold">{survey.respondent_name || 'Unknown'}</h3>
-                      <span className="text-sm text-muted-foreground">({survey.voterId || survey.voter_id || 'N/A'})</span>
+                    <div className="flex items-center flex-wrap gap-3 mb-3">
+                      <FileCheck className="h-5 w-5 text-green-500" />
+                      <h3 className="text-lg font-semibold">{safeString(survey.respondent_name, 'Unknown')}</h3>
+                      <span className="text-sm text-muted-foreground font-mono">
+                        ({safeString(survey.voter_id || survey.voterId, 'N/A')})
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        survey.status === 'Completed'
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                          : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                      }`}>
+                        {survey.status || 'Unknown'}
+                      </span>
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Survey:</span>
-                        <span className="ml-2 font-medium">{survey.survey_id || 'N/A'}</span>
+                      <div className="flex items-center gap-2">
+                        <FileCheck className="h-4 w-4 text-muted-foreground" />
+                        <div>
+                          <span className="text-muted-foreground block text-xs">Survey</span>
+                          <span className="font-medium font-mono text-xs">{safeString(survey.survey_id, 'N/A').slice(0, 10)}...</span>
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-muted-foreground">Booth:</span>
-                        <span className="ml-2 font-medium">{survey.booth || 'N/A'}</span>
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-muted-foreground" />
+                        <div>
+                          <span className="text-muted-foreground block text-xs">Booth</span>
+                          <span className="font-medium">{formatBoothDisplay(survey.boothname, survey.boothno, survey.booth_id)}</span>
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-muted-foreground">Date:</span>
-                        <span className="ml-2 font-medium">{formatDate(survey.survey_date)}</span>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <div>
+                          <span className="text-muted-foreground block text-xs">Date</span>
+                          <span className="font-medium">{formatDateTime(survey.survey_date)}</span>
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-muted-foreground">Status:</span>
-                        <span className={`ml-2 font-medium ${survey.status === 'Completed' ? 'text-green-600' : 'text-yellow-600'}`}>
-                          {survey.status || 'Unknown'}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <MapPin className="h-4 w-4 text-muted-foreground" />
+                        <div>
+                          <span className="text-muted-foreground block text-xs">AC</span>
+                          <span className="font-medium">AC {survey.ac_id || 'N/A'}</span>
+                          {survey.aci_name && (
+                            <span className="text-xs text-muted-foreground block">{survey.aci_name}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -237,10 +261,10 @@ export const SurveyManager = () => {
                         <p className="text-sm font-medium text-muted-foreground mb-2">
                           {survey.answers.length} answer(s) recorded
                         </p>
-                        {survey.answers.slice(0, 2).map((answer: any, index: number) => (
+                        {survey.answers.slice(0, 2).map((answer, index: number) => (
                           <p key={index} className="text-sm">
-                            <span className="font-medium">{answer.question || answer.questionId || `Q${index + 1}`}:</span>{' '}
-                            {answer.answer || answer.value || 'N/A'}
+                            <span className="font-medium">{answer.questionText || answer.questionId || `Q${index + 1}`}:</span>{' '}
+                            {safeString(answer.answerText || String(answer.answer), 'N/A')}
                           </p>
                         ))}
                         {survey.answers.length > 2 && (
@@ -259,6 +283,7 @@ export const SurveyManager = () => {
             ))
           ) : (
             <Card className="p-8 text-center">
+              <FileCheck className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
               <p className="text-muted-foreground">No survey responses found for this constituency.</p>
               <p className="text-sm text-muted-foreground mt-2">
                 Survey responses will appear here once booth agents submit surveys.

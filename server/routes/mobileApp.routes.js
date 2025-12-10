@@ -12,7 +12,14 @@ import {
   OPTION_REQUIRED_TYPES,
 } from "../utils/helpers.js";
 import { getVoterModel } from "../utils/voterCollection.js";
+import { getMobileAppAnswerModel, queryMobileAppAnswers } from "../utils/mobileAppAnswerCollection.js";
 import { isAuthenticated } from "../middleware/auth.js";
+import {
+  normalizeLocation,
+  enrichAcFields,
+  enrichBoothFields,
+  AC_NAMES
+} from "../utils/universalAdapter.js";
 
 const router = express.Router();
 
@@ -532,8 +539,14 @@ router.get("/responses", async (req, res) => {
       return res.json(directResult);
     }
 
-    // Fallback to aggregated responses from MobileAppAnswer
-    const aggregatedResult = await fetchAggregatedMobileAppResponses(options);
+    // Fallback to aggregated responses from MobileAppAnswer (including AC-sharded collections)
+    const aggregatedResult = await fetchAggregatedMobileAppResponses({
+      limit: options.limit,
+      cursor: options.cursor,
+      search: options.search,
+      acId: options.acId,
+      boothId: options.boothId,
+    });
     if (aggregatedResult.total > 0 || !directResult) {
       return res.json(aggregatedResult);
     }
@@ -548,14 +561,66 @@ router.get("/responses", async (req, res) => {
   }
 });
 
-async function fetchAggregatedMobileAppResponses({ limit, cursor, search }) {
+async function fetchAggregatedMobileAppResponses({ limit, cursor, search, acId, boothId }) {
   const matchQuery = buildAnswerSearchQuery(search);
   const fetchSize = Math.min(Math.max(limit * 25, 250), 5000);
 
-  const answers = await MobileAppAnswer.find(matchQuery)
-    .sort({ submittedAt: -1, createdAt: -1, _id: -1 })
-    .limit(fetchSize)
-    .lean();
+  // Add booth filter for query
+  if (boothId) {
+    matchQuery.$and = matchQuery.$and || [];
+    matchQuery.$and.push({
+      $or: [
+        { booth_id: boothId },
+        { boothId: boothId },
+        { booth: boothId },
+      ],
+    });
+  }
+
+  // Clean up empty $and
+  if (matchQuery.$and && matchQuery.$and.length === 0) {
+    delete matchQuery.$and;
+  }
+
+  let answers = [];
+
+  // If AC is specified, query the AC-specific collection first
+  if (acId) {
+    const numericAcId = parseInt(acId, 10);
+    if (!Number.isNaN(numericAcId)) {
+      try {
+        answers = await queryMobileAppAnswers(numericAcId, matchQuery, {
+          limit: fetchSize,
+          sort: { submittedAt: -1, createdAt: -1, _id: -1 },
+        });
+      } catch (err) {
+        console.log(`AC-specific collection mobileappanswers_${numericAcId} not found, falling back to legacy`);
+      }
+    }
+  }
+
+  // Fallback to legacy collection if no AC-specific results
+  if (answers.length === 0) {
+    // Add AC filter for legacy collection
+    if (acId) {
+      const numericAcId = parseInt(acId, 10);
+      if (!Number.isNaN(numericAcId)) {
+        matchQuery.$and = matchQuery.$and || [];
+        matchQuery.$and.push({
+          $or: [
+            { aci_id: numericAcId },
+            { aciId: numericAcId },
+            { acId: numericAcId },
+          ],
+        });
+      }
+    }
+
+    answers = await MobileAppAnswer.find(matchQuery)
+      .sort({ submittedAt: -1, createdAt: -1, _id: -1 })
+      .limit(fetchSize)
+      .lean();
+  }
 
   if (answers.length === 0) {
     return {
@@ -593,6 +658,12 @@ async function fetchAggregatedMobileAppResponses({ limit, cursor, search }) {
     const groupKey = buildAnswerGroupKey(answer);
     if (!grouped.has(groupKey)) {
       const submittedDate = answer.submittedAt ?? answer.syncedAt ?? answer.updatedAt ?? answer.createdAt;
+      // Get AC and booth info for metadata
+      const acIdValue = answer.aci_id ?? answer.acId ?? answer.aciId ?? null;
+      const acName = acIdValue ? AC_NAMES[Number(acIdValue)] || null : null;
+      const boothIdValue = answer.booth_id ?? answer.boothId ?? answer.booth ?? null;
+      const boothnoValue = answer.boothno || (boothIdValue ? boothIdValue.match(/^(BOOTH\d+)/i)?.[1]?.toUpperCase() : null);
+
       grouped.set(groupKey, {
         id: groupKey,
         respondentName: answer.respondentName ?? answer.submittedByName ?? null,
@@ -601,6 +672,14 @@ async function fetchAggregatedMobileAppResponses({ limit, cursor, search }) {
         status: answer.status ?? "Submitted",
         submittedAt: safeDateToISOString(submittedDate),
         sortTimestamp: submittedDate ? new Date(submittedDate).getTime() : 0,
+        metadata: {
+          acNumber: acIdValue ? Number(acIdValue) : undefined,
+          aciName: acName || undefined,
+          booth_id: boothIdValue || undefined,
+          boothno: boothnoValue || undefined,
+          booth: answer.boothname || boothnoValue || undefined,
+          agent: answer.submittedByName || undefined,
+        },
         answers: [],
       });
     }
@@ -683,22 +762,42 @@ router.get("/live-updates", async (req, res) => {
 
     const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
 
-    const matchQuery = {};
+    let recentAnswers = [];
+
+    // If AC is specified, query the AC-specific collection first
     if (acId) {
       const numericAcId = parseInt(acId, 10);
       if (!Number.isNaN(numericAcId)) {
-        matchQuery.$or = [
-          { acId: numericAcId },
-          { aciId: numericAcId },
-          { aci_id: numericAcId },
-        ];
+        try {
+          recentAnswers = await queryMobileAppAnswers(numericAcId, {}, {
+            limit: parsedLimit * 3,
+            sort: { submittedAt: -1, createdAt: -1, _id: -1 },
+          });
+        } catch (err) {
+          console.log(`AC-specific collection mobileappanswers_${numericAcId} not found for live updates`);
+        }
       }
     }
 
-    const recentAnswers = await MobileAppAnswer.find(matchQuery)
-      .sort({ submittedAt: -1, createdAt: -1, _id: -1 })
-      .limit(parsedLimit * 3)
-      .lean();
+    // Fallback to legacy collection
+    if (recentAnswers.length === 0) {
+      const matchQuery = {};
+      if (acId) {
+        const numericAcId = parseInt(acId, 10);
+        if (!Number.isNaN(numericAcId)) {
+          matchQuery.$or = [
+            { acId: numericAcId },
+            { aciId: numericAcId },
+            { aci_id: numericAcId },
+          ];
+        }
+      }
+
+      recentAnswers = await MobileAppAnswer.find(matchQuery)
+        .sort({ submittedAt: -1, createdAt: -1, _id: -1 })
+        .limit(parsedLimit * 3)
+        .lean();
+    }
 
     const surveyQuery = acId ? { acId: parseInt(acId, 10) } : {};
     const recentSurveys = await Survey.find(surveyQuery)
@@ -762,16 +861,29 @@ router.get("/live-updates", async (req, res) => {
         const boothId = answer.booth_id || answer.boothId || answer.booth || "Unknown Booth";
         const boothName = answer.boothname || boothNameLookup.get(boothId) || boothId;
 
+        // Use universal adapter for AC enrichment
+        const acIdValue = answer.aci_id || answer.acId || answer.aciId || null;
+        const acName = acIdValue ? (AC_NAMES[Number(acIdValue)] || null) : null;
+
+        // Normalize location data (handle both flat and GeoJSON formats)
+        let locationData = null;
+        if (answer.location) {
+          locationData = normalizeLocation(answer.location);
+        }
+
         grouped.set(groupKey, {
           id: answer._id?.toString() || groupKey,
           voter: voterName,
           booth: boothName,
           booth_id: answer.booth_id || answer.boothId || null,
+          boothno: answer.boothno || (answer.booth_id ? answer.booth_id.match(/^(BOOTH\d+)/i)?.[1]?.toUpperCase() : null),
           agent: answer.submittedByName || "Unknown Agent",
           timestamp: submittedDate,
           activity: "Survey completed",
           question: questionLookup.get(answer.questionId?.toString?.()) || null,
-          acId: answer.aci_id || answer.acId || answer.aciId || null,
+          acId: acIdValue,
+          aci_name: acName,
+          location: locationData,
         });
       }
     });
