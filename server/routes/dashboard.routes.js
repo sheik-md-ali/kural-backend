@@ -185,13 +185,21 @@ router.get("/booth-agent-activities", async (req, res) => {
   try {
     await connectToDatabase();
 
-    const { acId, limit = 100, status } = req.query;
+    const { acId, boothId, limit = 100, status } = req.query;
     const numericLimit = Math.min(Number(limit) || 100, 500);
 
     // Build query
     const query = {};
-    if (status) {
+    if (status && status !== 'all') {
       query.status = status;
+    }
+    if (boothId && boothId !== 'all') {
+      // Support both booth_id (e.g., "BOOTH1-111") and boothno (e.g., "BOOTH1") matching
+      query.$or = [
+        { booth_id: boothId },
+        { boothno: boothId },
+        { booth_id: { $regex: new RegExp(`^${boothId}`, 'i') } }
+      ];
     }
 
     let activities = [];
@@ -244,11 +252,16 @@ router.get("/booth-agent-activities", async (req, res) => {
       };
     });
 
+    // Get unique booth_ids from results for debugging
+    const uniqueBooths = [...new Set(normalizedActivities.map(a => a.booth_id).filter(Boolean))];
+
     return res.json({
       success: true,
       activities: normalizedActivities,
       total,
       count: normalizedActivities.length,
+      filters: { acId, boothId, status },
+      availableBooths: uniqueBooths.slice(0, 10), // For debugging
     });
   } catch (error) {
     console.error("Error fetching booth agent activities:", error);

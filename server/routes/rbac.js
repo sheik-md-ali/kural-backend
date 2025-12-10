@@ -2325,25 +2325,51 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
       perAcUserCounts.set(acId, bucket);
     });
 
-    const acPerformance = voterAggregation.map((entry) => {
+    // Deduplicate and merge AC data by acId (fix for duplicate entries)
+    const acDataMap = new Map();
+
+    voterAggregation.forEach((entry) => {
       const acId = entry._id.acId;
+      if (acId === null || acId === undefined) return;
+
       const acName = entry._id.acName;
-      const counts = perAcUserCounts.get(acId) || {
+      const voters = entry.totalMembers || 0;
+      const surveyedMembers = entry.surveyedMembers || 0;
+
+      // Merge with existing data if AC already exists (handles duplicates)
+      if (acDataMap.has(acId)) {
+        const existing = acDataMap.get(acId);
+        existing.voters += voters;
+        existing.surveyedMembers += surveyedMembers;
+        // Keep the most complete acName
+        if (!existing.acName && acName) {
+          existing.acName = acName;
+        }
+      } else {
+        acDataMap.set(acId, {
+          acId,
+          acName: acName || null,
+          voters,
+          surveyedMembers,
+        });
+      }
+    });
+
+    const acPerformance = Array.from(acDataMap.values()).map((entry) => {
+      const counts = perAcUserCounts.get(entry.acId) || {
         admins: 0,
         moderators: 0,
         agents: 0,
       };
-      const voters = entry.totalMembers || 0;
-      const surveyedMembers = entry.surveyedMembers || 0;
       const completion =
-        voters > 0 ? Math.round((surveyedMembers / voters) * 1000) / 10 : 0;
+        entry.voters > 0 ? Math.round((entry.surveyedMembers / entry.voters) * 1000) / 10 : 0;
 
       return {
-        ac: acName ? `${acId ?? ""} - ${acName}` : `AC ${acId ?? ""}`,
-        acNumber: acId ?? null,
-        acName: acName || null,
-        voters,
-        surveyedMembers,
+        ac: entry.acName ? `${entry.acId} - ${entry.acName}` : `AC ${entry.acId}`,
+        acNumber: entry.acId,
+        acName: entry.acName,
+        voters: entry.voters,
+        surveyedMembers: entry.surveyedMembers,
         completion,
         admins: counts.admins,
         moderators: counts.moderators,
@@ -2368,7 +2394,7 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
       }
     });
 
-    // Sort again after potential additions
+    // Sort by AC number
     acPerformance.sort((a, b) => {
       const aId = a.acNumber ?? 0;
       const bId = b.acNumber ?? 0;

@@ -127,7 +127,7 @@ export const VoterFieldManager = () => {
   });
 
   // Voter data management state
-  const [selectedAC, setSelectedAC] = useState<string>('119');
+  const [selectedAC, setSelectedAC] = useState<string>('111');
   const [voters, setVoters] = useState<Voter[]>([]);
   const [booths, setBooths] = useState<{ boothNo: number; boothName: string; label: string; boothId?: string }[]>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -617,12 +617,10 @@ export const VoterFieldManager = () => {
 
   return (
     <DashboardLayout>
-      <div className="space-y-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold mb-2">Voter Field Manager</h1>
-            <p className="text-muted-foreground">Manage fields in the voter collection schema and individual voter data</p>
-          </div>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold">Voter Field Manager</h1>
+          <p className="text-muted-foreground mt-1">Manage fields in the voter collection schema and individual voter data</p>
         </div>
 
         <Tabs defaultValue="fields" className="w-full">
@@ -803,21 +801,6 @@ export const VoterFieldManager = () => {
           </TabsContent>
 
           <TabsContent value="voters" className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <Select value={selectedAC} onValueChange={setSelectedAC}>
-                  <SelectTrigger className="w-[250px]">
-                    <SelectValue placeholder="Select Assembly Constituency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {AC_LIST.map((ac) => (
-                      <SelectItem key={ac.value} value={ac.value}>{ac.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
             {votersError && (
               <div className="bg-destructive/10 border border-destructive text-destructive px-4 py-3 rounded">
                 {votersError}
@@ -825,8 +808,9 @@ export const VoterFieldManager = () => {
             )}
 
             <Card className="p-4">
-              <div className="flex flex-wrap gap-4">
-                <div className="relative flex-1 min-w-[250px]">
+              <div className="space-y-4">
+                {/* Search field - full width on top */}
+                <div className="relative w-full">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search by name or voter ID..."
@@ -836,34 +820,47 @@ export const VoterFieldManager = () => {
                     className="pl-10"
                   />
                 </div>
-                <Select value={boothFilter} onValueChange={setBoothFilter}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="All Booths" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Booths</SelectItem>
-                    {booths.map((booth) => (
-                      <SelectItem key={booth.boothNo} value={booth.boothId || `BOOTH${booth.boothNo}-${selectedAC}`}>
-                        {booth.boothName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="All Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="Surveyed">Surveyed</SelectItem>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="Not Contacted">Not Contacted</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={handleVoterSearch}>
-                  <Filter className="mr-2 h-4 w-4" />
-                  Apply
-                </Button>
+                {/* Filters row */}
+                <div className="flex flex-wrap gap-4">
+                  <Select value={selectedAC} onValueChange={setSelectedAC}>
+                    <SelectTrigger className="w-[220px]">
+                      <SelectValue placeholder="Select AC" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AC_LIST.map((ac) => (
+                        <SelectItem key={ac.value} value={ac.value}>{ac.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={boothFilter} onValueChange={setBoothFilter}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="All Booths" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Booths</SelectItem>
+                      {booths.map((booth) => (
+                        <SelectItem key={booth.boothNo} value={booth.boothId || `BOOTH${booth.boothNo}-${selectedAC}`}>
+                          {booth.boothName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="All Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="Surveyed">Surveyed</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Not Contacted">Not Contacted</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" onClick={handleVoterSearch}>
+                    <Filter className="mr-2 h-4 w-4" />
+                    Apply
+                  </Button>
+                </div>
               </div>
             </Card>
 

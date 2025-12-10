@@ -776,7 +776,31 @@ router.get("/:acId", async (req, res) => {
     }
 
     if (status && status !== "all") {
-      queryClauses.push({ status });
+      // Handle "Not Contacted" status - includes voters without status field or with null/undefined status
+      if (status === "Not Contacted") {
+        queryClauses.push({
+          $or: [
+            { status: { $regex: /^not\s*contacted$/i } },
+            { status: { $exists: false } },
+            { status: null },
+            { status: "" }
+          ]
+        });
+      } else if (status === "Surveyed") {
+        // Match "Surveyed" or "verified" (case-insensitive)
+        queryClauses.push({
+          $or: [
+            { status: { $regex: /^surveyed$/i } },
+            { status: { $regex: /^verified$/i } }
+          ]
+        });
+      } else if (status === "Pending") {
+        // Match "Pending" (case-insensitive)
+        queryClauses.push({ status: { $regex: /^pending$/i } });
+      } else {
+        // For any other status, use case-insensitive match
+        queryClauses.push({ status: { $regex: new RegExp(`^${status}$`, 'i') } });
+      }
     }
 
     if (search) {

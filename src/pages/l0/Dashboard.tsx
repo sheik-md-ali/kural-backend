@@ -469,18 +469,34 @@ export const L0Dashboard = () => {
 
           <TabsContent value="performance" className="space-y-6">
             <Card className="p-6">
-              <h2 className="text-xl font-semibold mb-4">Assembly Constituency Performance</h2>
-              <p className="text-sm text-muted-foreground mb-4">Overview of top performing ACs</p>
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Assembly Constituency Performance</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {stats.acPerformance.length} constituencies • {stats.totalVoters.toLocaleString()} total voters
+                  </p>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Showing {stats.acPerformance.filter(row => {
+                    if (acFilter === 'all') return true;
+                    if (acFilter === 'high') return row.completion > 15;
+                    if (acFilter === 'medium') return row.completion >= 10 && row.completion <= 15;
+                    if (acFilter === 'low') return row.completion < 10;
+                    return true;
+                  }).length} of {stats.acPerformance.length} ACs
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-muted">
                     <tr>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">Assembly Constituency</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">Voters</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">AC</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Voters</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Surveyed</th>
                       <th className="px-4 py-3 text-left text-sm font-semibold">Completion</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">L1 Admins</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">L2 Mods</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">L3 Agents</th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold">L1</th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold">L2</th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold">Agents</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -493,26 +509,41 @@ export const L0Dashboard = () => {
                         return true;
                       })
                       .map((row, idx) => (
-                      <tr 
-                        key={idx} 
-                        className="hover:bg-muted/50 cursor-pointer transition-colors"
-                        onClick={() => navigate('/l0/booths')}
+                      <tr
+                        key={row.acNumber || idx}
+                        className="hover:bg-muted/50 transition-colors"
                       >
-                        <td className="px-4 py-3 text-sm font-medium">{row.ac}</td>
-                        <td className="px-4 py-3 text-sm">{row.voters.toLocaleString()}</td>
                         <td className="px-4 py-3 text-sm">
-                          <div className="flex items-center space-x-2">
-                            <span>{row.completion}%</span>
+                          <div className="font-medium">{row.ac}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right font-medium">{row.voters.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-right text-muted-foreground">
+                          {(row.surveyedMembers || 0).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          <div className="flex items-center gap-2">
+                            <div className="w-20 bg-muted rounded-full h-2">
+                              <div
+                                className={cn(
+                                  "h-2 rounded-full",
+                                  row.completion > 15 ? "bg-success" : row.completion > 5 ? "bg-warning" : "bg-destructive"
+                                )}
+                                style={{ width: `${Math.min(row.completion, 100)}%` }}
+                              />
+                            </div>
+                            <span className="w-14">{row.completion}%</span>
                             {row.completion > 15 ? (
                               <TrendingUp className="h-4 w-4 text-success" />
+                            ) : row.completion > 5 ? (
+                              <span className="h-4 w-4" />
                             ) : (
                               <TrendingDown className="h-4 w-4 text-destructive" />
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-sm">{row.admins}</td>
-                        <td className="px-4 py-3 text-sm">{row.moderators}</td>
-                        <td className="px-4 py-3 text-sm">{row.agents}</td>
+                        <td className="px-4 py-3 text-sm text-center">{row.admins}</td>
+                        <td className="px-4 py-3 text-sm text-center">{row.moderators}</td>
+                        <td className="px-4 py-3 text-sm text-center font-medium text-primary">{row.agents}</td>
                       </tr>
                     ))}
                   </tbody>

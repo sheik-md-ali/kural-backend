@@ -519,17 +519,17 @@ export const MobileAppResponses = () => {
                       {dist.data.length === 0 ? (
                         <p className="text-sm text-muted-foreground text-center py-8">No data available</p>
                       ) : (
-                        <div className="h-[200px]">
+                        <div className="h-[180px]">
                           <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                               <Pie
                                 data={dist.data}
                                 cx="50%"
                                 cy="50%"
-                                innerRadius={40}
-                                outerRadius={70}
+                                innerRadius={35}
+                                outerRadius={60}
                                 dataKey="value"
-                                label={({ name, percent }) => `${name}: ${percent}%`}
+                                label={false}
                                 labelLine={false}
                               >
                                 {dist.data.map((_, index) => (
@@ -539,7 +539,6 @@ export const MobileAppResponses = () => {
                               <Tooltip
                                 formatter={(value: number, name: string) => [`${value} (${dist.data.find(d => d.name === name)?.percent || 0}%)`, name]}
                               />
-                              <Legend />
                             </PieChart>
                           </ResponsiveContainer>
                         </div>
@@ -584,20 +583,25 @@ export const MobileAppResponses = () => {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {filteredResponsesForDisplay.map((response) => {
-                    const previewAnswers = response.answers.slice(0, 3);
+                    const previewAnswers = response.answers.slice(0, 2);
                     const remainingAnswers = response.answers.length - previewAnswers.length;
-                    const metadataEntries = response.metadata ? Object.entries(response.metadata).slice(0, 4) : [];
+                    // Filter out duplicate booth fields - keep only boothName or booth, exclude booth_id and boothNumber
+                    const metadataEntries = response.metadata
+                      ? Object.entries(response.metadata)
+                          .filter(([key]) => !['booth_id', 'boothNumber', 'booth_no'].includes(key))
+                          .slice(0, 3)
+                      : [];
 
                     return (
                       <Card key={response.id} className="border border-border/60 shadow-sm">
-                        <div className="p-5 flex flex-col gap-4">
-                          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="p-4 flex flex-col gap-3">
+                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                             <div className="space-y-1">
                               <div className="flex flex-wrap items-center gap-2">
-                                <h3 className="text-xl font-semibold flex items-center gap-2">
-                                  <User className="h-5 w-5 text-primary" />
+                                <h3 className="text-base font-semibold flex items-center gap-2">
+                                  <User className="h-4 w-4 text-primary" />
                                   {response.respondentName || 'Unnamed respondent'}
                                 </h3>
                                 {response.status && (
@@ -606,63 +610,61 @@ export const MobileAppResponses = () => {
                                   </Badge>
                                 )}
                               </div>
-                              <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                              <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                                 {response.phoneNumber && (
                                   <span className="flex items-center gap-1">
-                                    <Phone className="h-4 w-4" />
+                                    <Phone className="h-3 w-3" />
                                     {response.phoneNumber}
                                   </span>
                                 )}
                                 {response.voterId && (
                                   <span className="flex items-center gap-1">
-                                    <ClipboardList className="h-4 w-4" />
+                                    <ClipboardList className="h-3 w-3" />
                                     {response.voterId}
                                   </span>
                                 )}
                                 {response.submittedAt && (
                                   <span className="flex items-center gap-1">
-                                    <CalendarClock className="h-4 w-4" />
+                                    <CalendarClock className="h-3 w-3" />
                                     {formatDateTime(response.submittedAt)}
                                   </span>
                                 )}
                               </div>
                             </div>
-                            <div className="flex gap-2">
-                              <Button variant="outline" size="sm" onClick={() => openResponseDialog(response)}>
-                                <Eye className="h-4 w-4 mr-2" />
-                                View Details
-                              </Button>
-                            </div>
+                            <Button variant="outline" size="sm" onClick={() => openResponseDialog(response)}>
+                              <Eye className="h-4 w-4 mr-1" />
+                              View
+                            </Button>
                           </div>
 
                           {metadataEntries.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-1.5">
                               {metadataEntries.map(([key, value]) => (
-                                <Badge key={key} variant="outline" className="text-xs gap-1">
-                                  <MapPin className="h-3 w-3" />
+                                <Badge key={key} variant="outline" className="text-xs gap-1 py-0.5">
                                   <span className="capitalize">{key}:</span>
-                                  <span className="font-semibold">{String(value)}</span>
+                                  <span className="font-medium">{String(value)}</span>
                                 </Badge>
                               ))}
                             </div>
                           )}
-                        </div>
-                        <Separator />
-                        <div className="p-5 space-y-3 bg-muted/30">
-                          {previewAnswers.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No answers captured.</p>
-                          ) : (
-                            previewAnswers.map((answer) => (
-                              <div key={answer.id} className="rounded-lg bg-background border p-3">
-                                <p className="text-sm font-medium">{answer.prompt}</p>
-                                <AnswerValue value={answer.value} />
-                              </div>
-                            ))
-                          )}
-                          {remainingAnswers > 0 && (
-                            <p className="text-xs text-muted-foreground">
-                              +{remainingAnswers} more answer{remainingAnswers > 1 ? 's' : ''}
-                            </p>
+
+                          {previewAnswers.length > 0 && (
+                            <div className="flex flex-wrap gap-2 pt-2 border-t">
+                              {previewAnswers.map((answer) => (
+                                <div key={answer.id} className="text-xs bg-muted/50 rounded px-2 py-1 max-w-[200px]">
+                                  <span className="text-muted-foreground">{answer.prompt}: </span>
+                                  <span className="font-medium truncate">
+                                    {isNAValue(answer.value) ? 'N/A' : String(answer.value).slice(0, 30)}
+                                    {String(answer.value).length > 30 ? '...' : ''}
+                                  </span>
+                                </div>
+                              ))}
+                              {remainingAnswers > 0 && (
+                                <span className="text-xs text-muted-foreground self-center">
+                                  +{remainingAnswers} more
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       </Card>

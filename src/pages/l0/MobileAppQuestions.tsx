@@ -247,86 +247,18 @@ export const MobileAppQuestions = () => {
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Search Box with Dropdown */}
+            {/* Search Box */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground z-10" />
               <Input
-                placeholder="Type at least 3 characters to search questions..."
+                placeholder="Search questions... (optional)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
               />
-
-              {/* Dropdown Suggestions */}
-              {searchQuery.trim().length >= 3 && (() => {
-                const filteredQuestions = masterQuestions.filter((q) =>
-                  q.prompt.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  (q.options && q.options.some(opt => (opt.label || opt.value).toLowerCase().includes(searchQuery.toLowerCase())))
-                );
-
-                return filteredQuestions.length > 0 ? (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg max-h-[400px] overflow-y-auto z-20">
-                    <div className="p-2 border-b bg-muted/30">
-                      <p className="text-xs text-muted-foreground">
-                        Found {filteredQuestions.length} question{filteredQuestions.length !== 1 ? 's' : ''}
-                      </p>
-                    </div>
-                    {filteredQuestions.map((masterQ) => {
-                      const isSelected = selectedQuestions.find(
-                        q => q.masterQuestionId === masterQ.id || q.id === masterQ.id
-                      );
-                      return (
-                        <div
-                          key={masterQ.id}
-                          className={`p-3 hover:bg-muted/50 cursor-pointer border-b last:border-b-0 transition-colors ${
-                            isSelected ? 'bg-primary/5' : ''
-                          }`}
-                          onClick={() => {
-                            importQuestion(masterQ).then(() => {
-                              setImportDialogOpen(false);
-                            }).catch(() => {
-                              // Error already handled in importQuestion
-                            });
-                          }}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <p className="text-sm font-medium truncate">{masterQ.prompt}</p>
-                                {isSelected && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    Added
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline" className="text-xs">
-                                  {getTypeLabel(masterQ.type)}
-                                </Badge>
-                                {masterQ.options && masterQ.options.length > 0 && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {masterQ.options.length} option{masterQ.options.length !== 1 ? 's' : ''}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : searchQuery.trim().length >= 3 ? (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg z-20">
-                    <div className="p-4 text-center">
-                      <p className="text-sm text-muted-foreground">No questions found matching "{searchQuery}"</p>
-                      <p className="text-xs text-muted-foreground mt-1">Try a different search term</p>
-                    </div>
-                  </div>
-                ) : null;
-              })()}
             </div>
 
-            {/* Empty State */}
+            {/* Questions List */}
             {loadingMasterQuestions ? (
               <div className="flex items-center justify-center py-12">
                 <p className="text-muted-foreground">Loading master questions...</p>
@@ -338,15 +270,73 @@ export const MobileAppQuestions = () => {
                   Create master questions in the Master Data page first.
                 </p>
               </div>
-            ) : (
-              <div className="text-center py-12">
-                <Search className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
-                <p className="text-muted-foreground font-medium">Type at least 3 characters to search</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Search by question text or answer options
-                </p>
-              </div>
-            )}
+            ) : (() => {
+              // Filter questions based on search query (if any)
+              const filteredQuestions = searchQuery.trim().length > 0
+                ? masterQuestions.filter((q) =>
+                    q.prompt.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    (q.options && q.options.some(opt => (opt.label || opt.value).toLowerCase().includes(searchQuery.toLowerCase())))
+                  )
+                : masterQuestions;
+
+              return filteredQuestions.length > 0 ? (
+                <div className="border rounded-md max-h-[400px] overflow-y-auto">
+                  <div className="p-2 border-b bg-muted/30 sticky top-0">
+                    <p className="text-xs text-muted-foreground">
+                      {filteredQuestions.length} question{filteredQuestions.length !== 1 ? 's' : ''} available
+                    </p>
+                  </div>
+                  {filteredQuestions.map((masterQ) => {
+                    const isSelected = selectedQuestions.find(
+                      q => q.masterQuestionId === masterQ.id || q.id === masterQ.id
+                    );
+                    return (
+                      <div
+                        key={masterQ.id}
+                        className={`p-3 hover:bg-muted/50 cursor-pointer border-b last:border-b-0 transition-colors ${
+                          isSelected ? 'bg-primary/5' : ''
+                        }`}
+                        onClick={() => {
+                          importQuestion(masterQ).then(() => {
+                            setImportDialogOpen(false);
+                          }).catch(() => {
+                            // Error already handled in importQuestion
+                          });
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="text-sm font-medium truncate">{masterQ.prompt}</p>
+                              {isSelected && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Added
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {getTypeLabel(masterQ.type)}
+                              </Badge>
+                              {masterQ.options && masterQ.options.length > 0 && (
+                                <span className="text-xs text-muted-foreground">
+                                  {masterQ.options.length} option{masterQ.options.length !== 1 ? 's' : ''}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-12 border rounded-md">
+                  <p className="text-sm text-muted-foreground">No questions found matching "{searchQuery}"</p>
+                  <p className="text-xs text-muted-foreground mt-1">Try a different search term</p>
+                </div>
+              );
+            })()}
           </div>
         </DialogContent>
       </Dialog>
