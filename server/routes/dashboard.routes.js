@@ -13,6 +13,12 @@ import {
   countBoothAgentActivities,
   countAllBoothAgentActivities,
 } from "../utils/boothAgentActivityCollection.js";
+import {
+  queryMobileAppAnswers,
+} from "../utils/mobileAppAnswerCollection.js";
+import {
+  querySurveyResponses,
+} from "../utils/surveyResponseCollection.js";
 import { isAuthenticated, canAccessAC } from "../middleware/auth.js";
 import { getCache, setCache, cacheKeys, TTL } from "../utils/cache.js";
 import { AC_NAMES, normalizeLocation } from "../utils/universalAdapter.js";
@@ -268,6 +274,191 @@ router.get("/booth-agent-activities", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch booth agent activities",
+      error: error.message
+    });
+  }
+});
+
+// ==================== LOCATION DATA API ====================
+/**
+ * GET /api/dashboard/location-data
+ * Unified endpoint for fetching location data from all collections
+ * Returns data from: boothAgentActivities, mobileAppAnswers, surveyResponses
+ * Supports filtering by data source type
+ */
+router.get("/location-data", async (req, res) => {
+  try {
+    await connectToDatabase();
+    const { acId, sources = 'all', limit = 100 } = req.query;
+
+    if (!acId) {
+      return res.status(400).json({ success: false, message: "acId is required" });
+    }
+
+    const numericAcId = parseInt(acId, 10);
+    if (isNaN(numericAcId)) {
+      return res.status(400).json({ success: false, message: "Invalid acId" });
+    }
+
+    // Verify user has access to this AC
+    if (!canAccessAC(req.user, numericAcId)) {
+      return res.status(403).json({ success: false, message: "Access denied to this AC" });
+    }
+
+    const parsedLimit = Math.min(parseInt(limit, 10) || 100, 500);
+    const sourceList = sources === 'all'
+      ? ['activities', 'mobile', 'surveys']
+      : sources.split(',').filter(s => ['activities', 'mobile', 'surveys'].includes(s));
+
+    const results = {
+      activities: [],
+      mobile: [],
+      surveys: [],
+    };
+
+    // Fetch booth agent activities with location
+    if (sourceList.includes('activities')) {
+      try {
+        const activities = await queryBoothAgentActivities(numericAcId, {
+          location: { $exists: true, $ne: null }
+        }, {
+          limit: parsedLimit,
+          sort: { loginTime: -1, createdAt: -1 }
+        });
+
+        results.activities = activities
+          .filter(a => a.location?.coordinates?.length >= 2 || (a.location?.latitude && a.location?.longitude))
+          .map(a => {
+            const loc = normalizeLocation(a.location);
+            return {
+              id: a._id?.toString(),
+              type: 'activity',
+              latitude: loc?.latitude,
+              longitude: loc?.longitude,
+              title: a.userName || 'Booth Agent',
+              subtitle: `${a.activityType || 'login'} - ${a.boothno || a.booth_id || 'Unknown Booth'}`,
+              booth_id: a.booth_id,
+              boothno: a.boothno,
+              boothname: a.boothname,
+              agent: a.userName,
+              status: a.status,
+              timestamp: a.loginTime || a.createdAt,
+              color: a.status === 'active' ? '#22c55e' : '#6b7280',
+            };
+          })
+          .filter(a => a.latitude && a.longitude);
+      } catch (err) {
+        console.log(`No activities collection for AC ${numericAcId}`);
+      }
+    }
+
+    // Fetch mobile app answers with location
+    if (sourceList.includes('mobile')) {
+      try {
+        const answers = await queryMobileAppAnswers(numericAcId, {
+          location: { $exists: true, $ne: null }
+        }, {
+          limit: parsedLimit,
+          sort: { submittedAt: -1, createdAt: -1 }
+        });
+
+        results.mobile = answers
+          .filter(a => a.location?.latitude && a.location?.longitude)
+          .map(a => {
+            const loc = normalizeLocation(a.location);
+            return {
+              id: a._id?.toString(),
+              type: 'mobile',
+              latitude: loc?.latitude,
+              longitude: loc?.longitude,
+              title: a.submittedByName || 'Mobile Response',
+              subtitle: `Response - ${a.boothno || a.booth_id || 'Unknown Booth'}`,
+              booth_id: a.booth_id,
+              boothno: a.boothno,
+              boothname: a.boothname,
+              agent: a.submittedByName,
+              answerValue: a.answerValue || a.answerLabel,
+              timestamp: a.submittedAt || a.createdAt,
+              color: '#3b82f6',
+            };
+          })
+          .filter(a => a.latitude && a.longitude);
+      } catch (err) {
+        console.log(`No mobile answers collection for AC ${numericAcId}`);
+      }
+    }
+
+    // Fetch survey responses with location
+    if (sourceList.includes('surveys')) {
+      try {
+        const surveys = await querySurveyResponses(numericAcId, {
+          $or: [
+            { location: { $exists: true, $ne: null } },
+            { 'metadata.location': { $exists: true, $ne: null } }
+          ]
+        }, {
+          limit: parsedLimit,
+          sort: { submittedAt: -1, createdAt: -1 }
+        });
+
+        results.surveys = surveys
+          .filter(s => {
+            const loc = s.location || s.metadata?.location;
+            return loc && (loc.latitude || loc.coordinates);
+          })
+          .map(s => {
+            const rawLoc = s.location || s.metadata?.location;
+            const loc = normalizeLocation(rawLoc);
+            return {
+              id: s._id?.toString(),
+              type: 'survey',
+              latitude: loc?.latitude,
+              longitude: loc?.longitude,
+              title: s.respondentName || 'Survey Response',
+              subtitle: `Survey - ${s.boothno || s.booth_id || 'Unknown Booth'}`,
+              booth_id: s.booth_id,
+              boothno: s.boothno,
+              boothname: s.boothname,
+              respondent: s.respondentName,
+              status: s.status || (s.isComplete ? 'completed' : 'pending'),
+              timestamp: s.submittedAt || s.createdAt,
+              color: '#f59e0b',
+            };
+          })
+          .filter(s => s.latitude && s.longitude);
+      } catch (err) {
+        console.log(`No survey responses collection for AC ${numericAcId}`);
+      }
+    }
+
+    // Combine and sort all results
+    const allLocations = [
+      ...results.activities,
+      ...results.mobile,
+      ...results.surveys,
+    ].sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeB - timeA;
+    });
+
+    return res.json({
+      success: true,
+      data: allLocations,
+      counts: {
+        activities: results.activities.length,
+        mobile: results.mobile.length,
+        surveys: results.surveys.length,
+        total: allLocations.length,
+      },
+      acId: numericAcId,
+      acName: AC_NAMES[numericAcId] || null,
+    });
+  } catch (error) {
+    console.error("Error fetching location data:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch location data",
       error: error.message
     });
   }

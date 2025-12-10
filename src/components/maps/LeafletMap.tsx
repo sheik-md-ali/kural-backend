@@ -20,6 +20,7 @@ export interface LeafletMapProps {
   height?: string;
   fitBounds?: boolean;
   maxZoom?: number;
+  layer?: MapLayerType;
 }
 
 export type MapLayerType = 'osm' | 'satellite' | 'terrain' | 'dark';
@@ -36,30 +37,57 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   height = '500px',
   fitBounds = true,
   maxZoom = 15,
+  layer = 'osm',
 }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.Marker[]>([]);
   const layersRef = useRef<Record<string, L.TileLayer>>({});
-  const [currentLayer, setCurrentLayer] = useState<MapLayerType>('osm');
+  const [currentLayer, setCurrentLayer] = useState<MapLayerType>(layer);
 
-  // Create custom icon for markers
+  // Create custom icon for markers with enhanced styling
   const createMarkerIcon = (color: string = '#22c55e', label?: string) => {
+    // Create a more sophisticated marker with gradient and shadow effect
     const svg = `
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="12" cy="12" r="11" fill="${color}" stroke="white" stroke-width="2"/>
-        <circle cx="12" cy="12" r="9" fill="${color}" stroke="${color}" stroke-width="0.5" opacity="0.3"/>
-        ${label ? `<text x="12" y="15" text-anchor="middle" fill="white" font-size="10" font-weight="bold" font-family="Arial">${label}</text>` : ''}
+      <svg width="36" height="40" viewBox="0 0 36 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="grad-${color.replace('#', '')}" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:${color};stop-opacity:1" />
+            <stop offset="100%" style="stop-color:${adjustColorBrightness(color, -20)};stop-opacity:1" />
+          </linearGradient>
+          <filter id="shadow">
+            <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
+          </filter>
+        </defs>
+        <!-- Outer circle with gradient -->
+        <circle cx="18" cy="16" r="14" fill="url(#grad-${color.replace('#', '')})" filter="url(#shadow)" stroke="white" stroke-width="2"/>
+        <!-- Inner highlight -->
+        <circle cx="18" cy="14" r="11" fill="${color}" opacity="0.9"/>
+        <circle cx="16" cy="14" r="3" fill="white" opacity="0.4"/>
+        <!-- Label -->
+        ${label ? `<text x="18" y="19" text-anchor="middle" fill="white" font-size="12" font-weight="bold" font-family="Arial, sans-serif">${label}</text>` : ''}
+        <!-- Pointer -->
+        <path d="M 18 40 L 12 24 Q 18 28 18 28 Q 24 28 24 24 Z" fill="${color}" filter="url(#shadow)"/>
       </svg>
     `;
 
     return L.divIcon({
       html: svg,
-      iconSize: [28, 28],
-      iconAnchor: [14, 28],
-      popupAnchor: [0, -28],
-      className: 'leaflet-marker-icon',
+      iconSize: [36, 40],
+      iconAnchor: [18, 40],
+      popupAnchor: [0, -40],
+      className: 'leaflet-marker-icon-enhanced',
     });
+  };
+
+  // Helper function to adjust color brightness
+  const adjustColorBrightness = (color: string, percent: number): string => {
+    const num = parseInt(color.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = Math.max(0, Math.min(255, (num >> 16) + amt));
+    const G = Math.max(0, Math.min(255, (num >> 8 & 0x00FF) + amt));
+    const B = Math.max(0, Math.min(255, (num & 0x0000FF) + amt));
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
   };
 
   // Initialize tile layers
@@ -70,39 +98,66 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       attribution: '© OpenStreetMap contributors',
     });
 
-    // Satellite/Aerial (USGS)
-    layersRef.current.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19,
-      attribution: '© Esri',
-    });
+    // Satellite/Aerial - Using Esri World Imagery with better coverage
+    layersRef.current.satellite = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        maxZoom: 19,
+        minZoom: 0,
+        attribution: '© Esri, DigitalGlobe, Earthstar Geographics, and more',
+        crossOrigin: 'anonymous',
+      }
+    );
 
     // Terrain
     layersRef.current.terrain = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
       maxZoom: 17,
+      minZoom: 0,
       attribution: '© OpenTopoMap',
+      crossOrigin: 'anonymous',
     });
 
     // Dark Mode
     layersRef.current.dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       maxZoom: 19,
+      minZoom: 0,
       attribution: '© CartoDB',
+      crossOrigin: 'anonymous',
     });
 
     // Add OSM by default
     layersRef.current.osm.addTo(map);
   };
 
-  // Switch between map layers
-  const switchLayer = (layer: MapLayerType) => {
-    if (!mapInstanceRef.current) return;
+  // Switch between map layers - now with immediate visual feedback
+  const switchLayer = (newLayer: MapLayerType) => {
+    if (!mapInstanceRef.current || !layersRef.current[newLayer]) return;
 
-    // Remove current layer
-    Object.values(layersRef.current).forEach(tl => mapInstanceRef.current!.removeLayer(tl));
+    const map = mapInstanceRef.current;
+    
+    // Remove all existing tile layers
+    Object.entries(layersRef.current).forEach(([key, tileLayer]) => {
+      if (map.hasLayer(tileLayer)) {
+        map.removeLayer(tileLayer);
+      }
+    });
 
-    // Add new layer
-    layersRef.current[layer].addTo(mapInstanceRef.current);
-    setCurrentLayer(layer);
+    // Add the new layer
+    const newLayerInstance = layersRef.current[newLayer];
+    newLayerInstance.addTo(map);
+    
+    // Force a redraw to ensure immediate visual update
+    map.invalidateSize();
+    
+    setCurrentLayer(newLayer);
   };
+
+  // Update layer when prop changes
+  useEffect(() => {
+    if (layer && layer !== currentLayer && mapInstanceRef.current && layersRef.current[layer]) {
+      switchLayer(layer);
+    }
+  }, [layer]);
 
   useEffect(() => {
     if (!mapRef.current || !window.L) return;
@@ -295,7 +350,24 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
         }
 
-        /* Leaflet marker styling */
+        /* Enhanced marker styling with smooth animations */
+        .leaflet-marker-icon-enhanced {
+          filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.2));
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          will-change: transform;
+        }
+
+        .leaflet-marker-icon-enhanced:hover {
+          filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.3));
+          transform: scale(1.15) translateY(-4px);
+          z-index: 1000;
+        }
+
+        .leaflet-marker-pane {
+          will-change: auto;
+        }
+
+        /* Leaflet marker styling - legacy support */
         .leaflet-marker-icon {
           filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
           transition: transform 0.2s ease;
@@ -314,6 +386,15 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
           
           .leaflet-control-layers-custom {
             margin: 12px !important;
+          }
+
+          .leaflet-marker-icon-enhanced {
+            filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.15));
+          }
+
+          .leaflet-marker-icon-enhanced:hover {
+            filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25));
+            transform: scale(1.1) translateY(-2px);
           }
         }
       `}</style>
