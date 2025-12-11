@@ -821,7 +821,7 @@ router.get("/:acId", async (req, res) => {
     const VoterModel = getVoterModel(acId);
 
     const voters = await VoterModel.find(query)
-      .select("name voterID family_id booth_id boothname boothno mobile status age gender verified surveyed")
+      .select("name voterID familyId family_id booth_id boothname boothno mobile status age gender verified surveyed")
       .skip(skip)
       .limit(parseInt(limit))
       .sort({ boothno: 1, "name.english": 1 })
@@ -844,7 +844,7 @@ router.get("/:acId", async (req, res) => {
           id: voter._id,
           name: voterName,
           voterId: voter.voterID || "N/A",
-          familyId: voter.family_id || "N/A",
+          familyId: voter.familyId || voter.family_id || "N/A",
           booth: voter.boothname || `Booth ${voter.boothno || "N/A"}`,
           boothNo: voter.boothno,
           phone: voter.mobile ? `+91 ${voter.mobile}` : "N/A",

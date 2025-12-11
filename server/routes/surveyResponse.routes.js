@@ -264,7 +264,7 @@ router.get("/:acId", async (req, res) => {
     await connectToDatabase();
 
     const acId = parseInt(req.params.acId);
-    const { booth, survey, page = 1, limit = 50 } = req.query;
+    const { booth, survey, search, page = 1, limit = 50 } = req.query;
 
     if (isNaN(acId)) {
       return res.status(400).json({ message: "Invalid AC ID" });
@@ -279,27 +279,44 @@ router.get("/:acId", async (req, res) => {
     }
 
     const query = {};
+    const conditions = [];
 
     // Filter by booth - use boothname (primary), booth_id, or legacy booth field
     if (booth && booth !== 'all') {
-      query.$or = [
-        { boothname: { $regex: booth, $options: 'i' } },
-        { booth_id: { $regex: booth, $options: 'i' } },
-        { booth: { $regex: booth, $options: 'i' } },
-        { boothCode: booth }
-      ];
+      conditions.push({
+        $or: [
+          { boothname: { $regex: booth, $options: 'i' } },
+          { booth_id: { $regex: booth, $options: 'i' } },
+          { booth: { $regex: booth, $options: 'i' } },
+          { boothCode: booth }
+        ]
+      });
     }
 
+    // Filter by survey form
     if (survey && survey !== 'all') {
-      if (query.$or) {
-        query.$and = [
-          { $or: query.$or },
-          { $or: [{ surveyId: survey }, { formId: survey }] }
-        ];
-        delete query.$or;
-      } else {
-        query.$or = [{ surveyId: survey }, { formId: survey }];
-      }
+      conditions.push({
+        $or: [{ surveyId: survey }, { formId: survey }]
+      });
+    }
+
+    // Search by voter name or voter ID
+    if (search && search.trim()) {
+      const searchRegex = new RegExp(escapeRegExp(search.trim()), 'i');
+      conditions.push({
+        $or: [
+          { respondentName: searchRegex },
+          { voterName: searchRegex },
+          { respondentVoterId: searchRegex },
+          { voterId: searchRegex },
+          { voterID: searchRegex }
+        ]
+      });
+    }
+
+    // Build final query
+    if (conditions.length > 0) {
+      query.$and = conditions;
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);

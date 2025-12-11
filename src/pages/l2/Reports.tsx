@@ -1,10 +1,10 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { StatCard } from '@/components/StatCard';
 import { Card } from '@/components/ui/card';
-import { Users, Home, FileCheck, TrendingUp, Loader2, BarChart3, PieChart as PieChartIcon, Activity } from 'lucide-react';
+import { Users, Home, FileCheck, TrendingUp, Loader2, BarChart3, PieChart as PieChartIcon, Activity, Calendar } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ExportButton } from '@/components/ExportButton';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
@@ -20,10 +20,6 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
 } from 'recharts';
 import API_BASE_URL from '@/lib/api';
 
@@ -50,7 +46,21 @@ interface DashboardStats {
   acName?: string;
 }
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82ca9d', '#ffc658', '#ff7c43'];
+interface AgeGroup {
+  ageGroup: string;
+  count: number;
+  male: number;
+  female: number;
+}
+
+interface DemographicsData {
+  ageDistribution: AgeGroup[];
+  genderDistribution: { male: number; female: number };
+  surveyStatus: { surveyed: number; notSurveyed: number };
+}
+
+const COLORS = ['#3B82F6', '#EC4899', '#22C55E', '#EAB308', '#8B5CF6', '#F97316'];
+const AGE_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#F87171', '#A78BFA', '#FB923C'];
 
 export const Reports = () => {
   const { user } = useAuth();
@@ -59,22 +69,24 @@ export const Reports = () => {
 
   // API state
   const [boothReports, setBoothReports] = useState<BoothReport[]>([]);
+  const [allBooths, setAllBooths] = useState<Array<{id: string, name: string}>>([]);  // Store all booths for dropdown
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [demographics, setDemographics] = useState<DemographicsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchReports();
-  }, [acNumber]);
-
-  const fetchReports = async () => {
+  // Fetch all reports data
+  const fetchReports = useCallback(async (booth: string = 'all') => {
     try {
       setLoading(true);
       setError(null);
 
-      const [reportsResponse, statsResponse] = await Promise.all([
-        fetch(`${API_BASE_URL}/reports/${acNumber}/booth-performance`, { credentials: 'include' }),
-        fetch(`${API_BASE_URL}/dashboard/stats/${acNumber}`, { credentials: 'include' })
+      const boothParam = booth !== 'all' ? `?booth=${encodeURIComponent(booth)}` : '';
+
+      const [reportsResponse, statsResponse, demographicsResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/reports/${acNumber}/booth-performance${boothParam}`, { credentials: 'include' }),
+        fetch(`${API_BASE_URL}/dashboard/stats/${acNumber}`, { credentials: 'include' }),
+        fetch(`${API_BASE_URL}/reports/${acNumber}/demographics${boothParam}`, { credentials: 'include' })
       ]);
 
       if (!reportsResponse.ok) {
@@ -84,9 +96,23 @@ export const Reports = () => {
       const reportsData = await reportsResponse.json();
       setBoothReports(reportsData.reports || []);
 
+      // Store all booths for dropdown on initial load (when no booth filter)
+      if (booth === 'all' && reportsData.reports?.length > 0) {
+        const boothOptions = reportsData.reports.map((item: BoothReport, index: number) => ({
+          id: item.booth_id || `booth-${index}`,
+          name: item.boothname || `Booth ${item.boothNo}`
+        }));
+        setAllBooths(boothOptions);
+      }
+
       if (statsResponse.ok) {
         const statsData = await statsResponse.json();
         setStats(statsData);
+      }
+
+      if (demographicsResponse.ok) {
+        const demographicsData = await demographicsResponse.json();
+        setDemographics(demographicsData);
       }
     } catch (err) {
       console.error('Error fetching reports:', err);
@@ -94,25 +120,50 @@ export const Reports = () => {
     } finally {
       setLoading(false);
     }
+  }, [acNumber]);
+
+  useEffect(() => {
+    fetchReports();
+  }, [acNumber, fetchReports]);
+
+  // Handle booth filter change - trigger data refresh
+  const handleBoothFilterChange = (value: string) => {
+    setBoothFilter(value);
+    fetchReports(value);
   };
 
-  // Get unique booths for filter options
-  const uniqueBooths = boothReports.map(item => item.boothname || `Booth ${item.boothNo}`);
+  // Use allBooths for filter dropdown (populated on initial load, never changes when filtering)
 
-  // Filter booth performance data
+  // Filter booth data for table display
   const filteredBoothPerformance = boothReports.filter(item => {
     const boothName = item.boothname || `Booth ${item.boothNo}`;
     return boothFilter === 'all' || boothName === boothFilter;
   });
 
-  // Calculate totals
-  const totalVoters = boothReports.reduce((sum, b) => sum + b.total_voters, 0);
-  const totalFamilies = stats?.totalFamilies || boothReports.reduce((sum, b) => sum + b.total_families, 0);
-  const totalSurveys = stats?.surveysCompleted || boothReports.reduce((sum, b) => sum + b.surveys_completed, 0);
-  const totalMale = boothReports.reduce((sum, b) => sum + b.male_voters, 0);
-  const totalFemale = boothReports.reduce((sum, b) => sum + b.female_voters, 0);
-  const completionRate = totalVoters > 0 ? Math.round((totalSurveys / totalVoters) * 100 * 10) / 10 : 0;
+  // Calculate totals from demographics when filtering, fallback to booth reports
+  const totalMale = demographics?.genderDistribution?.male || boothReports.reduce((sum, b) => sum + b.male_voters, 0);
+  const totalFemale = demographics?.genderDistribution?.female || boothReports.reduce((sum, b) => sum + b.female_voters, 0);
+  const totalVoters = totalMale + totalFemale;
+  // When filtering by booth, use booth-specific family count; otherwise use global stats
+  const totalFamilies = boothFilter !== 'all'
+    ? filteredBoothPerformance.reduce((sum, b) => sum + b.total_families, 0)
+    : (stats?.totalFamilies || boothReports.reduce((sum, b) => sum + b.total_families, 0));
+  // When filtering by booth, use booth-specific survey count from filteredBoothPerformance
+  // Use nullish coalescing (??) to properly handle 0 values
+  const totalSurveys = boothFilter !== 'all'
+    ? filteredBoothPerformance.reduce((sum, b) => sum + b.surveys_completed, 0)
+    : (demographics?.surveyStatus?.surveyed ?? stats?.surveysCompleted ?? boothReports.reduce((sum, b) => sum + b.surveys_completed, 0));
   const pendingSurveys = totalVoters - totalSurveys;
+  // Calculate completion rate with proper precision for small values
+  const rawCompletionRate = totalVoters > 0 ? (totalSurveys / totalVoters) * 100 : 0;
+  const completionRate = rawCompletionRate > 0 && rawCompletionRate < 0.1
+    ? Math.round(rawCompletionRate * 100) / 100  // 2 decimal places for very small values
+    : Math.round(rawCompletionRate * 10) / 10;   // 1 decimal place for normal values
+  // Pending rate should use same precision as completion rate
+  const rawPendingRate = 100 - rawCompletionRate;
+  const pendingRate = rawPendingRate > 99.9 && rawPendingRate < 100
+    ? Math.round(rawPendingRate * 100) / 100  // 2 decimal places when close to 100%
+    : Math.round(rawPendingRate * 10) / 10;   // 1 decimal place for normal values
 
   // Chart data preparations
   const genderDistributionData = [
@@ -125,19 +176,16 @@ export const Reports = () => {
     { name: 'Pending', value: pendingSurveys, color: '#EAB308' },
   ];
 
-  const boothVoterData = boothReports.slice(0, 10).map(booth => ({
-    name: booth.boothname?.substring(0, 15) || `Booth ${booth.boothNo}`,
-    voters: booth.total_voters,
-    surveyed: booth.surveys_completed,
-    families: booth.total_families,
-  }));
+  // Age distribution data
+  const ageDistributionData = demographics?.ageDistribution?.map((item, index) => ({
+    name: item.ageGroup,
+    total: item.count,
+    male: item.male,
+    female: item.female,
+    color: AGE_COLORS[index % AGE_COLORS.length]
+  })) || [];
 
-  const boothCompletionData = boothReports.slice(0, 10).map(booth => ({
-    name: booth.boothname?.substring(0, 15) || `Booth ${booth.boothNo}`,
-    completion: booth.completion_rate,
-  }));
-
-  // Top and bottom performing booths
+  // Top and bottom performing booths (only when viewing all booths)
   const sortedByCompletion = [...boothReports].sort((a, b) => b.completion_rate - a.completion_rate);
   const topPerformingBooths = sortedByCompletion.slice(0, 5);
   const needsAttentionBooths = sortedByCompletion.slice(-5).reverse();
@@ -147,10 +195,12 @@ export const Reports = () => {
     voters: totalVoters,
     surveys: totalSurveys,
     completion: completionRate,
-    booths: boothReports.length,
+    booths: boothFilter === 'all' ? allBooths.length : 1,
     families: totalFamilies,
     maleVoters: totalMale,
     femaleVoters: totalFemale,
+    filteredBooth: boothFilter !== 'all' ? boothFilter : null,
+    ageDistribution: demographics?.ageDistribution,
     boothPerformance: filteredBoothPerformance.map(b => ({
       booth: b.boothname || `Booth ${b.boothNo}`,
       voters: b.total_voters,
@@ -159,7 +209,35 @@ export const Reports = () => {
     })),
   };
 
+  // Dynamic filename based on filter
+  const exportFilename = boothFilter === 'all'
+    ? `AC-${acNumber}-All-Booths-Report`
+    : `AC-${acNumber}-Booth-Report`;
+
   const acName = stats?.acName || user?.aciName || 'Assembly Constituency';
+
+  // Custom label renderer that avoids overlap
+  const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }: any) => {
+    const RADIAN = Math.PI / 180;
+    const radius = outerRadius + 30;
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+    if (percent < 0.05) return null; // Don't show labels for tiny slices
+
+    return (
+      <text
+        x={x}
+        y={y}
+        fill="#666"
+        textAnchor={x > cx ? 'start' : 'end'}
+        dominantBaseline="central"
+        fontSize={12}
+      >
+        {`${name}: ${(percent * 100).toFixed(0)}%`}
+      </text>
+    );
+  };
 
   if (loading) {
     return (
@@ -179,23 +257,26 @@ export const Reports = () => {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-4xl font-bold mb-2">Reports & Analytics</h1>
-            <p className="text-muted-foreground">Performance data for AC {acNumber} - {acName}</p>
+            <p className="text-muted-foreground">
+              Performance data for AC {acNumber} - {acName}
+              {boothFilter !== 'all' && <span className="ml-2 text-primary font-medium">(Filtered: {boothFilter.substring(0, 30)}...)</span>}
+            </p>
           </div>
           <div className="flex gap-2">
-            <Select value={boothFilter} onValueChange={setBoothFilter}>
-              <SelectTrigger className="w-[250px]">
+            <Select value={boothFilter} onValueChange={handleBoothFilterChange}>
+              <SelectTrigger className="w-[300px]">
                 <SelectValue placeholder="Filter by Booth" />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Booths</SelectItem>
-                {uniqueBooths.map((booth) => (
-                  <SelectItem key={booth} value={booth}>{booth}</SelectItem>
+              <SelectContent className="max-h-[300px]">
+                <SelectItem value="all">All Booths ({allBooths.length})</SelectItem>
+                {allBooths.map((booth) => (
+                  <SelectItem key={booth.id} value={booth.name}>{booth.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <ExportButton
               data={exportData}
-              filename={`AC-${acNumber}-Performance-Report`}
+              filename={exportFilename}
               acNumber={acNumber?.toString()}
             />
           </div>
@@ -219,8 +300,8 @@ export const Reports = () => {
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList className="grid w-full grid-cols-4 lg:w-[500px]">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="booths">Booth Analysis</TabsTrigger>
             <TabsTrigger value="demographics">Demographics</TabsTrigger>
+            <TabsTrigger value="booths">Booth Analysis</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
           </TabsList>
 
@@ -231,7 +312,7 @@ export const Reports = () => {
               <Card className="p-6">
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                   <PieChartIcon className="h-5 w-5 text-primary" />
-                  Survey Status Distribution
+                  Survey Completion Status
                 </h3>
                 <ResponsiveContainer width="100%" height={280}>
                   <PieChart>
@@ -240,27 +321,27 @@ export const Reports = () => {
                       cx="50%"
                       cy="50%"
                       innerRadius={60}
-                      outerRadius={100}
+                      outerRadius={90}
                       paddingAngle={5}
                       dataKey="value"
-                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                      labelLine={false}
                     >
                       {surveyStatusData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(value: number) => value.toLocaleString()} />
-                    <Legend />
+                    <Legend verticalAlign="bottom" height={36} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="mt-4 grid grid-cols-2 gap-4 text-center">
                   <div className="p-3 bg-green-500/10 rounded-lg">
                     <p className="text-2xl font-bold text-green-600">{totalSurveys.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">Completed</p>
+                    <p className="text-sm text-muted-foreground">Completed ({completionRate}%)</p>
                   </div>
                   <div className="p-3 bg-yellow-500/10 rounded-lg">
                     <p className="text-2xl font-bold text-yellow-600">{pendingSurveys.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">Pending</p>
+                    <p className="text-sm text-muted-foreground">Pending ({pendingRate}%)</p>
                   </div>
                 </div>
               </Card>
@@ -278,202 +359,106 @@ export const Reports = () => {
                       cx="50%"
                       cy="50%"
                       innerRadius={60}
-                      outerRadius={100}
+                      outerRadius={90}
                       paddingAngle={5}
                       dataKey="value"
-                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                      labelLine={false}
                     >
                       {genderDistributionData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(value: number) => value.toLocaleString()} />
-                    <Legend />
+                    <Legend verticalAlign="bottom" height={36} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="mt-4 grid grid-cols-2 gap-4 text-center">
                   <div className="p-3 bg-blue-500/10 rounded-lg">
                     <p className="text-2xl font-bold text-blue-600">{totalMale.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">Male Voters</p>
+                    <p className="text-sm text-muted-foreground">Male ({totalVoters > 0 ? ((totalMale / totalVoters) * 100).toFixed(1) : 0}%)</p>
                   </div>
                   <div className="p-3 bg-pink-500/10 rounded-lg">
                     <p className="text-2xl font-bold text-pink-600">{totalFemale.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">Female Voters</p>
+                    <p className="text-sm text-muted-foreground">Female ({totalVoters > 0 ? ((totalFemale / totalVoters) * 100).toFixed(1) : 0}%)</p>
                   </div>
                 </div>
               </Card>
             </div>
 
-            {/* Booth Voter Bar Chart */}
+            {/* Overall Progress */}
             <Card className="p-6">
-              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-primary" />
-                Booth-wise Voter & Survey Distribution
-              </h3>
-              {boothVoterData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={boothVoterData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} fontSize={11} />
-                    <YAxis />
-                    <Tooltip formatter={(value: number) => value.toLocaleString()} />
-                    <Legend />
-                    <Bar dataKey="voters" fill="#3B82F6" name="Total Voters" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="surveyed" fill="#22C55E" name="Surveyed" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="families" fill="#8B5CF6" name="Families" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-[350px] text-muted-foreground">
-                  No booth data available
+              <h3 className="text-lg font-semibold mb-6">Overall Survey Progress</h3>
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Overall Completion</span>
+                    <span className="font-semibold">{completionRate}%</span>
+                  </div>
+                  <Progress value={completionRate} className="h-4" />
                 </div>
-              )}
-            </Card>
-          </TabsContent>
 
-          {/* Booth Analysis Tab */}
-          <TabsContent value="booths" className="space-y-6">
-            {/* Completion Rate Bar Chart */}
-            <Card className="p-6">
-              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Activity className="h-5 w-5 text-primary" />
-                Booth Completion Rates
-              </h3>
-              {boothCompletionData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={boothCompletionData} layout="vertical" margin={{ top: 20, right: 30, left: 100, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis type="number" domain={[0, 100]} />
-                    <YAxis dataKey="name" type="category" width={90} fontSize={11} />
-                    <Tooltip formatter={(value: number) => `${value}%`} />
-                    <Bar dataKey="completion" fill="#22C55E" name="Completion Rate" radius={[0, 4, 4, 0]}>
-                      {boothCompletionData.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={entry.completion >= 70 ? '#22C55E' : entry.completion >= 40 ? '#EAB308' : '#EF4444'}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-[350px] text-muted-foreground">
-                  No booth data available
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                  <div className="p-4 bg-muted rounded-lg">
+                    <p className="text-2xl font-bold">{totalVoters.toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">Total Target</p>
+                  </div>
+                  <div className="p-4 bg-green-500/10 rounded-lg">
+                    <p className="text-2xl font-bold text-green-600">{totalSurveys.toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">Completed</p>
+                  </div>
+                  <div className="p-4 bg-yellow-500/10 rounded-lg">
+                    <p className="text-2xl font-bold text-yellow-600">{pendingSurveys.toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">Remaining</p>
+                  </div>
                 </div>
-              )}
-            </Card>
-
-            {/* Booth Performance Table */}
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold mb-6">Detailed Booth Performance</h2>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-muted">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">Booth</th>
-                      <th className="px-4 py-3 text-right text-sm font-semibold">Voters</th>
-                      <th className="px-4 py-3 text-right text-sm font-semibold">Families</th>
-                      <th className="px-4 py-3 text-right text-sm font-semibold">Male</th>
-                      <th className="px-4 py-3 text-right text-sm font-semibold">Female</th>
-                      <th className="px-4 py-3 text-right text-sm font-semibold">Surveyed</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold">Progress</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {filteredBoothPerformance.length > 0 ? (
-                      filteredBoothPerformance.map((row, idx) => (
-                        <tr key={idx} className="hover:bg-muted/50">
-                          <td className="px-4 py-3 text-sm font-medium">{row.boothname || `Booth ${row.boothNo}`}</td>
-                          <td className="px-4 py-3 text-sm text-right">{row.total_voters.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-sm text-right">{row.total_families.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-sm text-right text-blue-600">{row.male_voters.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-sm text-right text-pink-600">{row.female_voters.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-sm text-right text-green-600">{row.surveys_completed.toLocaleString()}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <Progress value={row.completion_rate} className="h-2 w-20" />
-                              <span className={`text-sm font-semibold ${
-                                row.completion_rate >= 70 ? 'text-green-600' :
-                                row.completion_rate >= 40 ? 'text-yellow-600' : 'text-red-600'
-                              }`}>
-                                {row.completion_rate}%
-                              </span>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
-                          No booth data available.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
               </div>
             </Card>
           </TabsContent>
 
           {/* Demographics Tab */}
           <TabsContent value="demographics" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Gender by Booth */}
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4">Gender Distribution by Booth</h3>
-                <div className="space-y-4 max-h-[400px] overflow-y-auto">
-                  {boothReports.slice(0, 10).map((booth, idx) => {
-                    const malePercent = booth.total_voters > 0 ? (booth.male_voters / booth.total_voters) * 100 : 0;
-                    const femalePercent = booth.total_voters > 0 ? (booth.female_voters / booth.total_voters) * 100 : 0;
-                    return (
-                      <div key={idx} className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span className="font-medium truncate max-w-[200px]">{booth.boothname || `Booth ${booth.boothNo}`}</span>
-                          <span className="text-muted-foreground">
-                            M: {booth.male_voters} / F: {booth.female_voters}
-                          </span>
-                        </div>
-                        <div className="w-full bg-muted rounded-full h-3 flex overflow-hidden">
-                          <div
-                            className="bg-blue-500 h-3 transition-all"
-                            style={{ width: `${malePercent}%` }}
-                          />
-                          <div
-                            className="bg-pink-500 h-3 transition-all"
-                            style={{ width: `${femalePercent}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+            {/* Age Distribution Bar Chart */}
+            <Card className="p-6">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-primary" />
+                Age Group Distribution
+              </h3>
+              {ageDistributionData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={350}>
+                  <BarChart data={ageDistributionData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="name" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number) => value.toLocaleString()} />
+                    <Legend />
+                    <Bar dataKey="male" fill="#3B82F6" name="Male" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="female" fill="#EC4899" name="Female" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                  No age data available
                 </div>
-              </Card>
+              )}
+            </Card>
 
-              {/* Age Demographics (if available) */}
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4">Average Age by Booth</h3>
-                {boothReports.some(b => b.avg_age > 0) ? (
-                  <ResponsiveContainer width="100%" height={350}>
-                    <BarChart data={boothReports.slice(0, 10).map(b => ({
-                      name: b.boothname?.substring(0, 12) || `B${b.boothNo}`,
-                      age: b.avg_age
-                    }))} margin={{ top: 20, right: 20, left: 20, bottom: 60 }}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                      <XAxis dataKey="name" angle={-45} textAnchor="end" fontSize={10} />
-                      <YAxis domain={[0, 100]} />
-                      <Tooltip />
-                      <Bar dataKey="age" fill="#8B5CF6" name="Avg Age" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex items-center justify-center h-[350px] text-muted-foreground">
-                    Age data not available
+            {/* Age Group Summary Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              {ageDistributionData.map((item, index) => (
+                <Card key={item.name} className="p-4 text-center">
+                  <p className="text-lg font-bold" style={{ color: AGE_COLORS[index % AGE_COLORS.length] }}>
+                    {item.total.toLocaleString()}
+                  </p>
+                  <p className="text-sm font-medium">{item.name}</p>
+                  <div className="flex justify-center gap-2 mt-2 text-xs text-muted-foreground">
+                    <span className="text-blue-600">M: {item.male}</span>
+                    <span className="text-pink-600">F: {item.female}</span>
                   </div>
-                )}
-              </Card>
+                </Card>
+              ))}
             </div>
 
-            {/* Summary Stats */}
+            {/* Demographics Summary */}
             <Card className="p-6">
               <h3 className="text-lg font-semibold mb-4">Demographics Summary</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -509,12 +494,88 @@ export const Reports = () => {
             </Card>
           </TabsContent>
 
+          {/* Booth Analysis Tab */}
+          <TabsContent value="booths" className="space-y-6">
+            {/* Summary Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card className="p-4 text-center">
+                <p className="text-2xl font-bold text-primary">{filteredBoothPerformance.length}</p>
+                <p className="text-sm text-muted-foreground">Booths Shown</p>
+              </Card>
+              <Card className="p-4 text-center">
+                <p className="text-2xl font-bold text-blue-600">{filteredBoothPerformance.reduce((sum, b) => sum + b.total_voters, 0).toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">Total Voters</p>
+              </Card>
+              <Card className="p-4 text-center">
+                <p className="text-2xl font-bold text-green-600">{filteredBoothPerformance.reduce((sum, b) => sum + b.surveys_completed, 0).toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">Surveyed</p>
+              </Card>
+              <Card className="p-4 text-center">
+                <p className="text-2xl font-bold text-purple-600">{filteredBoothPerformance.reduce((sum, b) => sum + b.total_families, 0).toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">Families</p>
+              </Card>
+            </div>
+
+            {/* Booth Performance Table */}
+            <Card className="p-6">
+              <h2 className="text-xl font-semibold mb-6">Detailed Booth Performance</h2>
+              <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                <table className="w-full">
+                  <thead className="bg-muted sticky top-0">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Booth</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Voters</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Families</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Male</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Female</th>
+                      <th className="px-4 py-3 text-right text-sm font-semibold">Surveyed</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold">Progress</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filteredBoothPerformance.length > 0 ? (
+                      filteredBoothPerformance.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-muted/50">
+                          <td className="px-4 py-3 text-sm font-medium max-w-[250px] truncate" title={row.boothname || `Booth ${row.boothNo}`}>
+                            {row.boothname || `Booth ${row.boothNo}`}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right">{row.total_voters.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-right">{row.total_families.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-right text-blue-600">{row.male_voters.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-right text-pink-600">{row.female_voters.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-right text-green-600">{row.surveys_completed.toLocaleString()}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <Progress value={row.completion_rate} className="h-2 w-20" />
+                              <span className={`text-sm font-semibold ${
+                                row.completion_rate >= 70 ? 'text-green-600' :
+                                row.completion_rate >= 40 ? 'text-yellow-600' : 'text-red-600'
+                              }`}>
+                                {row.completion_rate}%
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                          No booth data available.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </TabsContent>
+
           {/* Performance Tab */}
           <TabsContent value="performance" className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Top Performing Booths */}
               <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4 text-green-600">Top Performing Booths</h3>
+                <h3 className="text-lg font-semibold mb-4 text-green-600">Top 5 Performing Booths</h3>
                 <div className="space-y-3">
                   {topPerformingBooths.map((booth, idx) => (
                     <div key={idx} className="flex items-center justify-between p-3 bg-green-500/5 border border-green-500/20 rounded-lg">
@@ -522,8 +583,10 @@ export const Reports = () => {
                         <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center text-green-600 font-bold">
                           {idx + 1}
                         </div>
-                        <div>
-                          <p className="text-sm font-medium">{booth.boothname || `Booth ${booth.boothNo}`}</p>
+                        <div className="max-w-[200px]">
+                          <p className="text-sm font-medium truncate" title={booth.boothname || `Booth ${booth.boothNo}`}>
+                            {booth.boothname || `Booth ${booth.boothNo}`}
+                          </p>
                           <p className="text-xs text-muted-foreground">{booth.total_voters} voters</p>
                         </div>
                       </div>
@@ -538,7 +601,7 @@ export const Reports = () => {
 
               {/* Needs Attention Booths */}
               <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4 text-red-600">Needs Attention</h3>
+                <h3 className="text-lg font-semibold mb-4 text-red-600">Bottom 5 - Needs Attention</h3>
                 <div className="space-y-3">
                   {needsAttentionBooths.map((booth, idx) => (
                     <div key={idx} className="flex items-center justify-between p-3 bg-red-500/5 border border-red-500/20 rounded-lg">
@@ -546,8 +609,10 @@ export const Reports = () => {
                         <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center text-red-600 font-bold">
                           !
                         </div>
-                        <div>
-                          <p className="text-sm font-medium">{booth.boothname || `Booth ${booth.boothNo}`}</p>
+                        <div className="max-w-[200px]">
+                          <p className="text-sm font-medium truncate" title={booth.boothname || `Booth ${booth.boothNo}`}>
+                            {booth.boothname || `Booth ${booth.boothNo}`}
+                          </p>
                           <p className="text-xs text-muted-foreground">{booth.total_voters} voters</p>
                         </div>
                       </div>
@@ -561,31 +626,30 @@ export const Reports = () => {
               </Card>
             </div>
 
-            {/* Overall Progress */}
+            {/* Completion Rate Distribution */}
             <Card className="p-6">
-              <h3 className="text-lg font-semibold mb-6">Overall Survey Progress</h3>
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Overall Completion</span>
-                    <span className="font-semibold">{completionRate}%</span>
-                  </div>
-                  <Progress value={completionRate} className="h-4" />
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Activity className="h-5 w-5 text-primary" />
+                Booth Completion Distribution
+              </h3>
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="p-4 bg-green-500/10 rounded-lg">
+                  <p className="text-3xl font-bold text-green-600">
+                    {boothReports.filter(b => b.completion_rate >= 70).length}
+                  </p>
+                  <p className="text-sm text-muted-foreground">High (70%+)</p>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-                  <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-2xl font-bold">{totalVoters.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">Total Target</p>
-                  </div>
-                  <div className="p-4 bg-green-500/10 rounded-lg">
-                    <p className="text-2xl font-bold text-green-600">{totalSurveys.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">Completed</p>
-                  </div>
-                  <div className="p-4 bg-yellow-500/10 rounded-lg">
-                    <p className="text-2xl font-bold text-yellow-600">{pendingSurveys.toLocaleString()}</p>
-                    <p className="text-sm text-muted-foreground">Remaining</p>
-                  </div>
+                <div className="p-4 bg-yellow-500/10 rounded-lg">
+                  <p className="text-3xl font-bold text-yellow-600">
+                    {boothReports.filter(b => b.completion_rate >= 40 && b.completion_rate < 70).length}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Medium (40-69%)</p>
+                </div>
+                <div className="p-4 bg-red-500/10 rounded-lg">
+                  <p className="text-3xl font-bold text-red-600">
+                    {boothReports.filter(b => b.completion_rate < 40).length}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Low (&lt;40%)</p>
                 </div>
               </div>
             </Card>

@@ -154,7 +154,7 @@ export const L2Dashboard = () => {
               icon={Activity}
               title="Reports"
               description="View booth performance"
-              href="/l2/live-updates"
+              href="/l2/reports"
             />
             <ActionButton
               icon={Home}

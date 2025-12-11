@@ -26,68 +26,74 @@ export const ExportButton = ({ data, filename, acNumber }: ExportButtonProps) =>
     try {
       // Convert data to CSV format
       let csvContent = '';
-      
+
       // Add header information
       csvContent += 'AC Performance Report\n';
       csvContent += `AC Number,${acNumber || 'N/A'}\n`;
-      csvContent += `Report Generated,${new Date().toLocaleDateString()}\n\n`;
-      
-      // Key metrics
-      csvContent += 'Key Metrics\n';
+      if (data.filteredBooth) {
+        csvContent += `Filtered Booth,"${data.filteredBooth}"\n`;
+      }
+      csvContent += `Report Generated,"${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}"\n\n`;
+
+      // Key metrics section
+      csvContent += '=== SUMMARY METRICS ===\n';
       csvContent += 'Metric,Value\n';
-      csvContent += `Total Voters,${data.voters || 'N/A'}\n`;
-      csvContent += `Total Families,${data.families || 'N/A'}\n`;
-      csvContent += `Surveys Completed,${data.surveys || 'N/A'}\n`;
-      csvContent += `Total Booths,${data.booths || 'N/A'}\n`;
-      csvContent += `Completion Rate,${data.completion ? `${data.completion}%` : 'N/A'}\n\n`;
-      
-      // Booth performance data
-      if (data.boothPerformance) {
-        csvContent += 'Booth Performance\n';
-        csvContent += 'Booth ID,Total Voters,Surveyed,Completion %\n';
-        data.boothPerformance.forEach((booth: any) => {
-          csvContent += `${booth.booth},${booth.voters},${booth.surveyed},${booth.completion}%\n`;
+      csvContent += `Total Voters,${data.voters || 0}\n`;
+      csvContent += `Total Families,${data.families || 0}\n`;
+      csvContent += `Surveys Completed,${data.surveys || 0}\n`;
+      csvContent += `Total Booths,${data.booths || 0}\n`;
+      csvContent += `Completion Rate,${data.completion || 0}%\n\n`;
+
+      // Gender distribution section
+      if (data.maleVoters !== undefined || data.femaleVoters !== undefined) {
+        csvContent += '=== GENDER DISTRIBUTION ===\n';
+        csvContent += 'Gender,Count,Percentage\n';
+        const total = (data.maleVoters || 0) + (data.femaleVoters || 0);
+        const malePercent = total > 0 ? ((data.maleVoters || 0) / total * 100).toFixed(1) : '0';
+        const femalePercent = total > 0 ? ((data.femaleVoters || 0) / total * 100).toFixed(1) : '0';
+        csvContent += `Male,${data.maleVoters || 0},${malePercent}%\n`;
+        csvContent += `Female,${data.femaleVoters || 0},${femalePercent}%\n\n`;
+      }
+
+      // Age distribution section
+      if (data.ageDistribution && data.ageDistribution.length > 0) {
+        csvContent += '=== AGE DISTRIBUTION ===\n';
+        csvContent += 'Age Group,Total Count,Male,Female\n';
+        data.ageDistribution.forEach((age: any) => {
+          const ageGroup = age.ageGroup || age.group || 'Unknown';
+          csvContent += `"${ageGroup}",${age.count},${age.male || age.maleCount || 0},${age.female || age.femaleCount || 0}\n`;
         });
         csvContent += '\n';
       }
-      
+
+      // Booth performance data section
+      if (data.boothPerformance && data.boothPerformance.length > 0) {
+        csvContent += '=== BOOTH-WISE PERFORMANCE ===\n';
+        csvContent += 'S.No,Booth Name,Total Voters,Surveys Completed,Completion Rate\n';
+        data.boothPerformance.forEach((booth: any, index: number) => {
+          csvContent += `${index + 1},"${booth.booth}",${booth.voters},${booth.surveyed},${booth.completion}%\n`;
+        });
+        csvContent += '\n';
+      }
+
       // Survey questions data
-      if (data.surveyQuestions) {
-        csvContent += 'Survey Question Coverage\n';
+      if (data.surveyQuestions && data.surveyQuestions.length > 0) {
+        csvContent += '=== SURVEY QUESTION COVERAGE ===\n';
         csvContent += 'Question,Responses,Percentage\n';
         data.surveyQuestions.forEach((q: any) => {
           csvContent += `"${q.question}",${q.responses},${q.percentage}%\n`;
         });
         csvContent += '\n';
       }
-      
+
       // Agent performance data
-      if (data.agentPerformance) {
-        csvContent += 'Agent Performance\n';
+      if (data.agentPerformance && data.agentPerformance.length > 0) {
+        csvContent += '=== AGENT PERFORMANCE ===\n';
         csvContent += 'Agent Name,Surveys Completed,Quality Score\n';
         data.agentPerformance.forEach((agent: any) => {
           csvContent += `"${agent.name}",${agent.surveys},${agent.quality}%\n`;
         });
         csvContent += '\n';
-      }
-      
-      // Weekly trend data
-      if (data.weeklyTrend) {
-        csvContent += 'Weekly Survey Trend\n';
-        csvContent += 'Week,Completed Surveys\n';
-        data.weeklyTrend.forEach((week: any) => {
-          csvContent += `"${week.week}",${week.completed}\n`;
-        });
-        csvContent += '\n';
-      }
-      
-      // Response distribution data
-      if (data.responseDistribution) {
-        csvContent += 'Response Distribution\n';
-        csvContent += 'Status,Count\n';
-        data.responseDistribution.forEach((status: any) => {
-          csvContent += `"${status.name}",${status.value}\n`;
-        });
       }
 
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -100,7 +106,7 @@ export const ExportButton = ({ data, filename, acNumber }: ExportButtonProps) =>
 
       toast({
         title: 'Export Successful',
-        description: 'CSV file has been downloaded.',
+        description: `CSV file with ${data.boothPerformance?.length || 0} booth records has been downloaded.`,
       });
     } catch (error) {
       toast({
@@ -116,35 +122,79 @@ export const ExportButton = ({ data, filename, acNumber }: ExportButtonProps) =>
   const handleExportExcel = () => {
     setIsExporting(true);
     try {
-      // For now, we'll export as CSV but with Excel extension
-      // In a real app, you would use a library like xlsx
-      let csvContent = '';
-      
+      // Export as tab-separated values with Excel extension for proper Excel compatibility
+      let tsvContent = '';
+
       // Add header information
-      csvContent += 'AC Performance Report\n';
-      csvContent += `AC Number\t${acNumber || 'N/A'}\n`;
-      csvContent += `Report Generated\t${new Date().toLocaleDateString()}\n\n`;
-      
-      // Key metrics
-      csvContent += 'Key Metrics\n';
-      csvContent += 'Metric\tValue\n';
-      csvContent += `Total Voters\t${data.voters || 'N/A'}\n`;
-      csvContent += `Total Families\t${data.families || 'N/A'}\n`;
-      csvContent += `Surveys Completed\t${data.surveys || 'N/A'}\n`;
-      csvContent += `Total Booths\t${data.booths || 'N/A'}\n`;
-      csvContent += `Completion Rate\t${data.completion ? `${data.completion}%` : 'N/A'}\n\n`;
-      
-      // Booth performance data
-      if (data.boothPerformance) {
-        csvContent += 'Booth Performance\n';
-        csvContent += 'Booth ID\tTotal Voters\tSurveyed\tCompletion %\n';
-        data.boothPerformance.forEach((booth: any) => {
-          csvContent += `${booth.booth}\t${booth.voters}\t${booth.surveyed}\t${booth.completion}%\n`;
-        });
-        csvContent += '\n';
+      tsvContent += 'AC Performance Report\n';
+      tsvContent += `AC Number\t${acNumber || 'N/A'}\n`;
+      if (data.filteredBooth) {
+        tsvContent += `Filtered Booth\t${data.filteredBooth}\n`;
+      }
+      tsvContent += `Report Generated\t${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}\n\n`;
+
+      // Key metrics section
+      tsvContent += '=== SUMMARY METRICS ===\n';
+      tsvContent += 'Metric\tValue\n';
+      tsvContent += `Total Voters\t${data.voters || 0}\n`;
+      tsvContent += `Total Families\t${data.families || 0}\n`;
+      tsvContent += `Surveys Completed\t${data.surveys || 0}\n`;
+      tsvContent += `Total Booths\t${data.booths || 0}\n`;
+      tsvContent += `Completion Rate\t${data.completion || 0}%\n\n`;
+
+      // Gender distribution section
+      if (data.maleVoters !== undefined || data.femaleVoters !== undefined) {
+        tsvContent += '=== GENDER DISTRIBUTION ===\n';
+        tsvContent += 'Gender\tCount\tPercentage\n';
+        const total = (data.maleVoters || 0) + (data.femaleVoters || 0);
+        const malePercent = total > 0 ? ((data.maleVoters || 0) / total * 100).toFixed(1) : '0';
+        const femalePercent = total > 0 ? ((data.femaleVoters || 0) / total * 100).toFixed(1) : '0';
+        tsvContent += `Male\t${data.maleVoters || 0}\t${malePercent}%\n`;
+        tsvContent += `Female\t${data.femaleVoters || 0}\t${femalePercent}%\n\n`;
       }
 
-      const blob = new Blob([csvContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+      // Age distribution section
+      if (data.ageDistribution && data.ageDistribution.length > 0) {
+        tsvContent += '=== AGE DISTRIBUTION ===\n';
+        tsvContent += 'Age Group\tTotal Count\tMale\tFemale\n';
+        data.ageDistribution.forEach((age: any) => {
+          const ageGroup = age.ageGroup || age.group || 'Unknown';
+          tsvContent += `${ageGroup}\t${age.count}\t${age.male || age.maleCount || 0}\t${age.female || age.femaleCount || 0}\n`;
+        });
+        tsvContent += '\n';
+      }
+
+      // Booth performance data section
+      if (data.boothPerformance && data.boothPerformance.length > 0) {
+        tsvContent += '=== BOOTH-WISE PERFORMANCE ===\n';
+        tsvContent += 'S.No\tBooth Name\tTotal Voters\tSurveys Completed\tCompletion Rate\n';
+        data.boothPerformance.forEach((booth: any, index: number) => {
+          tsvContent += `${index + 1}\t${booth.booth}\t${booth.voters}\t${booth.surveyed}\t${booth.completion}%\n`;
+        });
+        tsvContent += '\n';
+      }
+
+      // Survey questions data
+      if (data.surveyQuestions && data.surveyQuestions.length > 0) {
+        tsvContent += '=== SURVEY QUESTION COVERAGE ===\n';
+        tsvContent += 'Question\tResponses\tPercentage\n';
+        data.surveyQuestions.forEach((q: any) => {
+          tsvContent += `${q.question}\t${q.responses}\t${q.percentage}%\n`;
+        });
+        tsvContent += '\n';
+      }
+
+      // Agent performance data
+      if (data.agentPerformance && data.agentPerformance.length > 0) {
+        tsvContent += '=== AGENT PERFORMANCE ===\n';
+        tsvContent += 'Agent Name\tSurveys Completed\tQuality Score\n';
+        data.agentPerformance.forEach((agent: any) => {
+          tsvContent += `${agent.name}\t${agent.surveys}\t${agent.quality}%\n`;
+        });
+        tsvContent += '\n';
+      }
+
+      const blob = new Blob([tsvContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -154,7 +204,7 @@ export const ExportButton = ({ data, filename, acNumber }: ExportButtonProps) =>
 
       toast({
         title: 'Export Successful',
-        description: 'Excel file has been downloaded.',
+        description: `Excel file with ${data.boothPerformance?.length || 0} booth records has been downloaded.`,
       });
     } catch (error) {
       toast({
