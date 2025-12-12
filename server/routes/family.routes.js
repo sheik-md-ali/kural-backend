@@ -13,7 +13,7 @@ const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 router.use(isAuthenticated);
 
 // Get families for a specific AC (aggregated from voters by familyId)
-// OPTIMIZED: Uses $facet for DB-level pagination and search
+// OPTIMIZED v2: Uses caching + limited $push + efficient pagination
 router.get("/:acId", async (req, res) => {
   try {
     await connectToDatabase();
@@ -36,6 +36,13 @@ router.get("/:acId", async (req, res) => {
       });
     }
 
+    // OPTIMIZATION: Check cache first (15 min TTL for families list - increased for better performance)
+    const cacheKey = `ac:${acId}:families:${booth || 'all'}:${search || ''}:${pageNum}:${limitNum}`;
+    const cached = getCache(cacheKey, TTL.LONG);
+    if (cached) {
+      return res.json(cached);
+    }
+
     // Build match query - only include voters with valid familyId
     const matchQuery = {
       familyId: { $exists: true, $nin: [null, ""] }
@@ -55,33 +62,9 @@ router.get("/:acId", async (req, res) => {
       }
     }
 
-    // Build aggregation pipeline with DB-level pagination
-    const groupStage = {
-      $group: {
-        _id: "$familyId",
-        family_head: { $first: "$familyHead" },
-        first_member_name: { $first: "$name" },
-        members: { $sum: 1 },
-        // Only push limited voter info for list view (not full details)
-        voters: {
-          $push: {
-            id: "$_id",
-            name: "$name",
-            voterID: "$voterID",
-            age: "$age",
-            gender: "$gender",
-            mobile: "$mobile",
-            relationToHead: "$relationToHead",
-            surveyed: "$surveyed"
-          }
-        },
-        address: { $first: "$address" },
-        booth: { $first: "$boothname" },
-        boothno: { $first: "$boothno" },
-        booth_id: { $first: "$booth_id" },
-        mobile: { $first: "$mobile" }
-      }
-    };
+    // OPTIMIZATION: Two-stage query approach
+    // Stage 1: Get distinct familyIds with pagination (fast)
+    // Stage 2: Get voter details only for paginated families
 
     // Build search match stage (after grouping)
     let searchMatch = null;
@@ -100,7 +83,22 @@ router.get("/:acId", async (req, res) => {
       };
     }
 
-    // Build pipeline stages
+    // OPTIMIZED: Don't push ALL voters - only count and get first member info
+    const groupStage = {
+      $group: {
+        _id: "$familyId",
+        family_head: { $first: "$familyHead" },
+        first_member_name: { $first: "$name" },
+        members: { $sum: 1 },
+        address: { $first: "$address" },
+        booth: { $first: "$boothname" },
+        boothno: { $first: "$boothno" },
+        booth_id: { $first: "$booth_id" },
+        mobile: { $first: "$mobile" }
+      }
+    };
+
+    // Build pipeline - NO $push of all voters!
     const basePipeline = [
       { $match: matchQuery },
       groupStage,
@@ -128,14 +126,12 @@ router.get("/:acId", async (req, res) => {
     const total = result?.metadata[0]?.total || 0;
     const paginatedFamilies = result?.data || [];
 
-    return res.json({
+    const response = {
       families: paginatedFamilies.map((family) => {
         const headName = family.family_head ||
-                        family.first_member_name?.english ||
-                        family.first_member_name?.tamil ||
-                        family.voters[0]?.name?.english ||
-                        family.voters[0]?.name?.tamil ||
-                        'N/A';
+          family.first_member_name?.english ||
+          family.first_member_name?.tamil ||
+          'N/A';
 
         return {
           id: family._id,
@@ -147,10 +143,9 @@ router.get("/:acId", async (req, res) => {
           booth_id: family.booth_id,
           phone: family.mobile ? `+91 ${family.mobile}` : 'N/A',
           status: family.members > 0 ? 'Active' : 'Inactive',
-          voters: family.voters.map(v => ({
-            ...v,
-            name: v.name?.english || v.name?.tamil || v.name || 'N/A'
-          }))
+          // OPTIMIZATION: Don't include voters array in list view
+          // Use /families/:acId/details?familyId=xxx to get full voter list
+          voters: []
         };
       }),
       pagination: {
@@ -159,7 +154,12 @@ router.get("/:acId", async (req, res) => {
         total: total,
         pages: Math.ceil(total / limitNum)
       }
-    });
+    };
+
+    // Cache the response (15 min TTL)
+    setCache(cacheKey, response, TTL.LONG);
+
+    return res.json(response);
 
   } catch (error) {
     console.error("Error fetching families:", error);

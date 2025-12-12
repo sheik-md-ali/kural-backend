@@ -76,6 +76,12 @@ export const SurveyResponses = () => {
   const [loadingSurvey, setLoadingSurvey] = useState(false);
 
   useEffect(() => {
+    // Require AC selection before fetching responses
+    if (acFilter === 'all') {
+      setResponses([]);
+      setLoading(false);
+      return;
+    }
     fetchResponses();
   }, [pagination.page, acFilter, boothFilter, surveyFilter]);
 

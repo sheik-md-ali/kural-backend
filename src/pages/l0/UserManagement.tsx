@@ -114,6 +114,13 @@ const UserManagement: React.FC = () => {
   });
 
   useEffect(() => {
+    // For L2 and BoothAgent tabs, require AC selection before fetching
+    const requiresACSelection = activeTab === "L2" || activeTab === "BoothAgent";
+    if (requiresACSelection && acFilter === "all") {
+      setUsers([]);
+      setLoading(false);
+      return;
+    }
     fetchUsers();
     fetchBooths();
   }, [activeTab, statusFilter, acFilter]);

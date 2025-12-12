@@ -13,6 +13,7 @@ import {
 } from "../utils/helpers.js";
 import { isAuthenticated, canAccessAC } from "../middleware/auth.js";
 import { writeRateLimiter } from "../middleware/rateLimit.js";
+import { getCache, setCache, TTL } from "../utils/cache.js";
 
 const router = express.Router();
 
@@ -25,6 +26,13 @@ router.get("/", async (req, res) => {
     await connectToDatabase();
 
     const { role, assignedAC } = req.query ?? {};
+
+    // Build cache key from query params
+    const cacheKey = `surveys:list:${role || 'all'}:${assignedAC || 'all'}`;
+    const cached = getCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
 
     const filter = {};
 
@@ -60,7 +68,12 @@ router.get("/", async (req, res) => {
 
     const surveys = await Survey.find(filter).sort({ createdAt: -1 });
 
-    return res.json(surveys.map((survey) => survey.toJSON()));
+    const response = surveys.map((survey) => survey.toJSON());
+
+    // Cache surveys list for 5 minutes
+    setCache(cacheKey, response, TTL.MEDIUM);
+
+    return res.json(response);
   } catch (error) {
     console.error("Error fetching surveys", error);
     return res.status(500).json({ message: "Failed to fetch surveys" });
@@ -78,13 +91,25 @@ router.get("/:surveyId", async (req, res) => {
       return res.status(400).json({ message: "Invalid survey ID" });
     }
 
+    // Check cache first
+    const cacheKey = `survey:${surveyId}`;
+    const cached = getCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     const survey = await Survey.findById(surveyId);
 
     if (!survey) {
       return res.status(404).json({ message: "Survey not found" });
     }
 
-    return res.json(survey.toJSON());
+    const response = survey.toJSON();
+
+    // Cache individual survey for 10 minutes
+    setCache(cacheKey, response, TTL.MEDIUM * 2);
+
+    return res.json(response);
   } catch (error) {
     console.error("Error fetching survey", error);
     return res.status(500).json({ message: "Failed to fetch survey" });

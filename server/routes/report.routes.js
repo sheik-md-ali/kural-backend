@@ -12,6 +12,7 @@ const router = express.Router();
 router.use(isAuthenticated);
 
 // Get booth performance reports
+// OPTIMIZED v2: Combined aggregation, removed expensive $addToSet
 router.get("/:acId/booth-performance", async (req, res) => {
   try {
     await connectToDatabase();
@@ -31,7 +32,7 @@ router.get("/:acId/booth-performance", async (req, res) => {
       });
     }
 
-    // OPTIMIZATION: Cache booth performance reports (only when no booth filter)
+    // OPTIMIZATION: Cache booth performance reports (10 min TTL)
     const cacheKey = booth && booth !== 'all'
       ? `ac:${acId}:report:booth-performance:${booth}`
       : `ac:${acId}:report:booth-performance`;
@@ -46,41 +47,65 @@ router.get("/:acId/booth-performance", async (req, res) => {
       matchQuery.boothname = booth;
     }
 
-    // Aggregate booth performance data using AC-specific voter collection
     const VoterModel = getVoterModel(acId);
-    const boothPerformance = await VoterModel.aggregate([
+
+    // OPTIMIZATION: Single aggregation with $facet for booth stats + family counts
+    const [result] = await VoterModel.aggregate([
       { $match: matchQuery },
       {
-        $group: {
-          _id: {
-            boothname: "$boothname",
-            boothno: "$boothno",
-            booth_id: "$booth_id"
-          },
-          total_voters: { $sum: 1 },
-          male_voters: {
-            $sum: { $cond: [{ $eq: ["$gender", "Male"] }, 1, 0] }
-          },
-          female_voters: {
-            $sum: { $cond: [{ $eq: ["$gender", "Female"] }, 1, 0] }
-          },
-          verified_voters: {
-            $sum: { $cond: ["$verified", 1, 0] }
-          },
-          avg_age: { $avg: "$age" }
+        $facet: {
+          // Booth performance stats
+          boothStats: [
+            {
+              $group: {
+                _id: {
+                  boothname: "$boothname",
+                  boothno: "$boothno",
+                  booth_id: "$booth_id"
+                },
+                total_voters: { $sum: 1 },
+                male_voters: {
+                  $sum: { $cond: [{ $eq: ["$gender", "Male"] }, 1, 0] }
+                },
+                female_voters: {
+                  $sum: { $cond: [{ $eq: ["$gender", "Female"] }, 1, 0] }
+                },
+                verified_voters: {
+                  $sum: { $cond: ["$verified", 1, 0] }
+                },
+                avg_age: { $avg: "$age" }
+              }
+            },
+            { $sort: { "_id.boothno": 1 } }
+          ],
+          // Family counts per booth - OPTIMIZED: Use count instead of $addToSet
+          familyCounts: [
+            { $match: { familyId: { $exists: true, $nin: [null, ""] } } },
+            {
+              $group: {
+                _id: { boothname: "$boothname", familyId: "$familyId" }
+              }
+            },
+            {
+              $group: {
+                _id: "$_id.boothname",
+                total_families: { $sum: 1 }
+              }
+            }
+          ]
         }
-      },
-      { $sort: { "_id.boothno": 1 } }
+      }
     ]);
 
-    // Get survey completion data from AC-specific collection
-    // Use boothname (primary), booth_id, or legacy booth field
+    const boothPerformance = result.boothStats || [];
+    const familyMap = new Map((result.familyCounts || []).map(f => [f._id, f.total_families]));
+
+    // Get survey completion data from AC-specific collection (separate query - different collection)
     let surveysByBooth = [];
     try {
       surveysByBooth = await aggregateSurveyResponses(acId, [
         {
           $group: {
-            // Group by boothname first, fallback to booth_id or legacy booth
             _id: { $ifNull: ["$boothname", { $ifNull: ["$booth_id", "$booth"] }] },
             surveys_completed: { $sum: 1 }
           }
@@ -91,26 +116,6 @@ router.get("/:acId/booth-performance", async (req, res) => {
     }
 
     const surveyMap = new Map(surveysByBooth.map(s => [s._id, s.surveys_completed]));
-
-    // Calculate families per booth using unique familyId (camelCase field)
-    const familiesByBooth = await VoterModel.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: "$boothname",
-          // Use $addToSet to get unique family IDs
-          uniqueFamilies: { $addToSet: "$familyId" }
-        }
-      },
-      {
-        $project: {
-          _id: 1,
-          total_families: { $size: "$uniqueFamilies" }
-        }
-      }
-    ]);
-
-    const familyMap = new Map(familiesByBooth.map(f => [f._id, f.total_families]));
 
     const response = {
       reports: boothPerformance.map(booth => ({
@@ -125,7 +130,7 @@ router.get("/:acId/booth-performance", async (req, res) => {
         male_voters: booth.male_voters,
         female_voters: booth.female_voters,
         verified_voters: booth.verified_voters,
-        // Survey data - try matching by boothname first, then booth_id
+        // Survey data
         surveys_completed: surveyMap.get(booth._id.boothname) || surveyMap.get(booth._id.booth_id) || 0,
         avg_age: Math.round(booth.avg_age || 0),
         completion_rate: booth.total_voters > 0
@@ -146,6 +151,7 @@ router.get("/:acId/booth-performance", async (req, res) => {
 });
 
 // Get demographics data including age distribution
+// OPTIMIZED v2: Single $facet aggregation instead of 3 separate queries
 router.get("/:acId/demographics", async (req, res) => {
   try {
     await connectToDatabase();
@@ -165,7 +171,7 @@ router.get("/:acId/demographics", async (req, res) => {
       });
     }
 
-    // OPTIMIZATION: Cache demographics reports
+    // OPTIMIZATION: Cache demographics reports (10 min TTL)
     const cacheKey = booth && booth !== 'all'
       ? `ac:${acId}:report:demographics:${booth}`
       : `ac:${acId}:report:demographics`;
@@ -174,58 +180,60 @@ router.get("/:acId/demographics", async (req, res) => {
       return res.json(cached);
     }
 
-    const matchQuery = { age: { $exists: true, $ne: null } };
+    const matchQuery = {};
     if (booth && booth !== 'all') {
       matchQuery.boothname = booth;
     }
 
     const VoterModel = getVoterModel(acId);
 
-    // Age distribution with gender breakdown
-    const ageDistribution = await VoterModel.aggregate([
+    // OPTIMIZATION: Single aggregation with $facet - 3 queries in 1!
+    const [result] = await VoterModel.aggregate([
       { $match: matchQuery },
       {
-        $group: {
-          _id: {
-            $switch: {
-              branches: [
-                { case: { $and: [{ $gte: ["$age", 18] }, { $lte: ["$age", 25] }] }, then: "18-25" },
-                { case: { $and: [{ $gte: ["$age", 26] }, { $lte: ["$age", 35] }] }, then: "26-35" },
-                { case: { $and: [{ $gte: ["$age", 36] }, { $lte: ["$age", 45] }] }, then: "36-45" },
-                { case: { $and: [{ $gte: ["$age", 46] }, { $lte: ["$age", 55] }] }, then: "46-55" },
-                { case: { $and: [{ $gte: ["$age", 56] }, { $lte: ["$age", 65] }] }, then: "56-65" },
-                { case: { $gte: ["$age", 66] }, then: "65+" }
-              ],
-              default: "Unknown"
+        $facet: {
+          // Age distribution
+          ageDistribution: [
+            { $match: { age: { $exists: true, $ne: null } } },
+            {
+              $group: {
+                _id: {
+                  $switch: {
+                    branches: [
+                      { case: { $and: [{ $gte: ["$age", 18] }, { $lte: ["$age", 25] }] }, then: "18-25" },
+                      { case: { $and: [{ $gte: ["$age", 26] }, { $lte: ["$age", 35] }] }, then: "26-35" },
+                      { case: { $and: [{ $gte: ["$age", 36] }, { $lte: ["$age", 45] }] }, then: "36-45" },
+                      { case: { $and: [{ $gte: ["$age", 46] }, { $lte: ["$age", 55] }] }, then: "46-55" },
+                      { case: { $and: [{ $gte: ["$age", 56] }, { $lte: ["$age", 65] }] }, then: "56-65" },
+                      { case: { $gte: ["$age", 66] }, then: "65+" }
+                    ],
+                    default: "Unknown"
+                  }
+                },
+                count: { $sum: 1 },
+                maleCount: { $sum: { $cond: [{ $eq: ["$gender", "Male"] }, 1, 0] } },
+                femaleCount: { $sum: { $cond: [{ $eq: ["$gender", "Female"] }, 1, 0] } }
+              }
             }
-          },
-          count: { $sum: 1 },
-          maleCount: { $sum: { $cond: [{ $eq: ["$gender", "Male"] }, 1, 0] } },
-          femaleCount: { $sum: { $cond: [{ $eq: ["$gender", "Female"] }, 1, 0] } }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    // Gender distribution
-    const genderMatchQuery = booth && booth !== 'all' ? { boothname: booth } : {};
-    const genderDistribution = await VoterModel.aggregate([
-      { $match: genderMatchQuery },
-      {
-        $group: {
-          _id: "$gender",
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    // Surveyed status
-    const surveyedStatus = await VoterModel.aggregate([
-      { $match: genderMatchQuery },
-      {
-        $group: {
-          _id: "$surveyed",
-          count: { $sum: 1 }
+          ],
+          // Gender distribution
+          genderDistribution: [
+            {
+              $group: {
+                _id: "$gender",
+                count: { $sum: 1 }
+              }
+            }
+          ],
+          // Survey status
+          surveyStatus: [
+            {
+              $group: {
+                _id: "$surveyed",
+                count: { $sum: 1 }
+              }
+            }
+          ]
         }
       }
     ]);
@@ -233,7 +241,7 @@ router.get("/:acId/demographics", async (req, res) => {
     // Format age groups in consistent order
     const ageGroups = ["18-25", "26-35", "36-45", "46-55", "56-65", "65+"];
     const formattedAgeData = ageGroups.map(group => {
-      const data = ageDistribution.find(a => a._id === group);
+      const data = result.ageDistribution.find(a => a._id === group);
       return {
         ageGroup: group,
         count: data?.count || 0,
@@ -244,14 +252,14 @@ router.get("/:acId/demographics", async (req, res) => {
 
     // Format gender data
     const genderData = {
-      male: genderDistribution.find(g => g._id === "Male")?.count || 0,
-      female: genderDistribution.find(g => g._id === "Female")?.count || 0
+      male: result.genderDistribution.find(g => g._id === "Male")?.count || 0,
+      female: result.genderDistribution.find(g => g._id === "Female")?.count || 0
     };
 
     // Format survey status
     const surveyData = {
-      surveyed: surveyedStatus.find(s => s._id === true)?.count || 0,
-      notSurveyed: surveyedStatus.find(s => s._id === false)?.count || 0
+      surveyed: result.surveyStatus.find(s => s._id === true)?.count || 0,
+      notSurveyed: result.surveyStatus.find(s => s._id === false || s._id === null)?.count || 0
     };
 
     const response = {

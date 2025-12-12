@@ -16,13 +16,80 @@ import {
 } from "../utils/universalAdapter.js";
 import Survey from "../models/Survey.js";
 import { isAuthenticated, canAccessAC } from "../middleware/auth.js";
+import { getCache, setCache, TTL } from "../utils/cache.js";
 
 const router = express.Router();
 
 // Apply authentication to all routes
 router.use(isAuthenticated);
 
-// Helper function to populate question text from survey form
+// Survey form cache to avoid N+1 queries
+const surveyFormCache = new Map();
+const SURVEY_FORM_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Batch fetch survey forms - called once per request with all unique surveyIds
+const batchFetchSurveyForms = async (surveyIds) => {
+  const uniqueIds = [...new Set(surveyIds.filter(Boolean).map(String))];
+  const result = new Map();
+  const toFetch = [];
+  const now = Date.now();
+
+  // Check cache first
+  for (const id of uniqueIds) {
+    const cached = surveyFormCache.get(id);
+    if (cached && (now - cached.timestamp) < SURVEY_FORM_CACHE_TTL) {
+      result.set(id, cached.form);
+    } else {
+      toFetch.push(id);
+    }
+  }
+
+  // Fetch missing forms in one query
+  if (toFetch.length > 0) {
+    try {
+      const forms = await Survey.find({ _id: { $in: toFetch } }).lean();
+      for (const form of forms) {
+        const id = form._id.toString();
+        surveyFormCache.set(id, { form, timestamp: now });
+        result.set(id, form);
+      }
+    } catch (err) {
+      console.log(`Batch fetch survey forms error: ${err.message}`);
+    }
+  }
+
+  return result;
+};
+
+// Synchronous question text population using pre-fetched form
+const populateQuestionTextSync = (answers, surveyForm) => {
+  if (!answers || !Array.isArray(answers) || answers.length === 0) {
+    return answers;
+  }
+
+  const questionMap = new Map();
+  if (surveyForm && surveyForm.questions) {
+    surveyForm.questions.forEach((q) => {
+      if (q.id) questionMap.set(q.id, q.text || q.prompt || 'Question');
+      if (q._id) questionMap.set(q._id.toString(), q.text || q.prompt || 'Question');
+    });
+  }
+
+  return answers.map((answer, index) => {
+    if (answer.question && typeof answer.question === 'string' && answer.question.length > 0 && !/^\d+$/.test(answer.question)) {
+      return answer;
+    }
+    const qId = answer.questionId || answer.question;
+    const questionText = qId ? questionMap.get(String(qId)) : null;
+    return {
+      ...answer,
+      question: questionText || answer.prompt || `Question ${index + 1}`,
+      questionId: qId || answer.questionId
+    };
+  });
+};
+
+// Legacy helper function to populate question text from survey form (kept for compatibility)
 const populateQuestionText = async (answers, surveyId) => {
   if (!answers || !Array.isArray(answers) || answers.length === 0) {
     return answers;
@@ -213,14 +280,17 @@ router.get("/", async (req, res) => {
       responses = responses.slice(skip, skip + limitNum);
     }
 
-    // Normalize and process responses using universal adapter
-    const processedResponses = await Promise.all(responses.map(async (response) => {
-      // Use universal adapter to normalize the response
-      const normalized = normalizeSurveyResponse(response, { enrichAc: true, enrichBooth: true });
+    // Batch fetch all survey forms ONCE (fixes N+1 query problem)
+    const normalizedResponses = responses.map(r => normalizeSurveyResponse(r, { enrichAc: true, enrichBooth: true }));
+    const surveyIds = normalizedResponses.map(r => r.formId).filter(Boolean);
+    const surveyFormsMap = await batchFetchSurveyForms(surveyIds);
 
+    // Process responses synchronously using pre-fetched forms
+    const processedResponses = normalizedResponses.map((normalized) => {
       const surveyId = normalized.formId;
+      const surveyForm = surveyId ? surveyFormsMap.get(String(surveyId)) : null;
       const answers = normalized.answers || [];
-      const populatedAnswers = await populateQuestionText(answers, surveyId);
+      const populatedAnswers = populateQuestionTextSync(answers, surveyForm);
 
       return {
         id: normalized._id,
@@ -229,18 +299,16 @@ router.get("/", async (req, res) => {
         voter_id: normalized.respondentVoterId || 'N/A',
         voterID: normalized.respondentVoterId || '',
         voterId: normalized.respondentVoterId || 'N/A',
-        // Booth fields - from normalized data
         booth: normalized.boothname || 'N/A',
         booth_id: normalized.booth_id || null,
         boothno: normalized.boothno || null,
-        // AC fields - from normalized data
         ac_id: normalized.aci_id || null,
         aci_name: normalized.aci_name || null,
         survey_date: normalized.submittedAt || new Date(),
         status: normalized.isComplete ? 'Completed' : (normalized.status || 'Pending'),
         answers: populatedAnswers
       };
-    }));
+    });
 
     return res.json({
       responses: processedResponses,
@@ -331,14 +399,17 @@ router.get("/:acId", async (req, res) => {
 
     const totalResponses = await countSurveyResponses(acId, query);
 
-    // Normalize and process responses using universal adapter
-    const processedResponses = await Promise.all(responses.map(async (response) => {
-      // Use universal adapter to normalize the response
-      const normalized = normalizeSurveyResponse(response, { enrichAc: true, enrichBooth: true });
+    // Batch fetch all survey forms ONCE (fixes N+1 query problem)
+    const normalizedResponses = responses.map(r => normalizeSurveyResponse(r, { enrichAc: true, enrichBooth: true }));
+    const surveyIds = normalizedResponses.map(r => r.formId).filter(Boolean);
+    const surveyFormsMap = await batchFetchSurveyForms(surveyIds);
 
+    // Process responses synchronously using pre-fetched forms
+    const processedResponses = normalizedResponses.map((normalized) => {
       const surveyId = normalized.formId;
+      const surveyForm = surveyId ? surveyFormsMap.get(String(surveyId)) : null;
       const answers = normalized.answers || [];
-      const populatedAnswers = await populateQuestionText(answers, surveyId);
+      const populatedAnswers = populateQuestionTextSync(answers, surveyForm);
 
       return {
         id: normalized._id,
@@ -347,18 +418,16 @@ router.get("/:acId", async (req, res) => {
         voter_id: normalized.respondentVoterId || 'N/A',
         voterID: normalized.respondentVoterId || '',
         voterId: normalized.respondentVoterId || 'N/A',
-        // Booth fields - from normalized data
         booth: normalized.boothname || 'N/A',
         booth_id: normalized.booth_id || null,
         boothno: normalized.boothno || null,
-        // AC fields - from normalized data (use acId param as fallback)
         ac_id: normalized.aci_id || acId,
         aci_name: normalized.aci_name || null,
         survey_date: normalized.submittedAt || new Date(),
         status: normalized.isComplete ? 'Completed' : (normalized.status || 'Pending'),
         answers: populatedAnswers
       };
-    }));
+    });
 
     return res.json({
       responses: processedResponses,

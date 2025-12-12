@@ -256,14 +256,14 @@ const buildDashboardAnalytics = async ({ assignedAC, totalBooths, boothsActive }
   const acFilter =
     assignedAC !== null
       ? {
-          $or: [
-            { aci_id: assignedAC },
-            { aci_num: assignedAC },
-            { acId: assignedAC },
-            { assignedAC },
-            { "metadata.acId": assignedAC },
-          ],
-        }
+        $or: [
+          { aci_id: assignedAC },
+          { aci_num: assignedAC },
+          { acId: assignedAC },
+          { assignedAC },
+          { "metadata.acId": assignedAC },
+        ],
+      }
       : null;
   const surveyResponseMatch =
     acFilter !== null
@@ -436,6 +436,15 @@ router.get("/users", isAuthenticated, async (req, res) => {
       });
     }
 
+    // Cache check - only use cache when no search filter (common case)
+    const cacheKey = `users:${req.user.role}:${req.user.assignedAC || 'all'}:${role || 'all'}:${ac || 'all'}:${status || 'all'}`;
+    if (!search) {
+      const cached = getCache(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+    }
+
     // L0 can see all users (including inactive), L1/L2 only see active users
     const query = {};
 
@@ -491,7 +500,7 @@ router.get("/users", isAuthenticated, async (req, res) => {
           { phone: searchRegex },
         ]
       };
-      
+
       // If there's already a $and (from L1 + role filter), add search to it
       if (query.$and) {
         query.$and.push(searchFilter);
@@ -520,7 +529,7 @@ router.get("/users", isAuthenticated, async (req, res) => {
 
     // Get the actual count to verify
     const totalCount = await User.countDocuments(query);
-    
+
     // Also get total count without any filters for L0
     let totalInDatabase = totalCount;
     if (req.user.role === "L0") {
@@ -531,13 +540,20 @@ router.get("/users", isAuthenticated, async (req, res) => {
     console.log(`[RBAC] Fetched ${users.length} users out of ${totalCount} total matching query`);
     console.log(`[RBAC] Total users in database: ${totalInDatabase}`);
 
-    res.json({
+    const response = {
       success: true,
       count: users.length,
       totalCount: totalCount,
       totalInDatabase: totalInDatabase,
       users,
-    });
+    };
+
+    // Cache the response (only when no search filter)
+    if (!search) {
+      setCache(cacheKey, response, TTL.SHORT);
+    }
+
+    res.json(response);
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json({
@@ -555,14 +571,14 @@ router.get("/users", isAuthenticated, async (req, res) => {
  */
 router.post("/users", isAuthenticated, async (req, res) => {
   try {
-    const { 
+    const {
       name, email, phone, password, role, assignedAC, aci_name, assignedBoothId, status,
-      booth_id, booth_agent_id, aci_id 
+      booth_id, booth_agent_id, aci_id
     } = req.body;
 
-    console.log("Create user request:", { 
+    console.log("Create user request:", {
       name, role, assignedAC, booth_id, booth_agent_id, aci_id,
-      currentUserRole: req.user.role, currentUserAC: req.user.assignedAC 
+      currentUserRole: req.user.role, currentUserAC: req.user.assignedAC
     });
 
     // Validate required fields
@@ -871,19 +887,19 @@ function normalizePhone(phone) {
  */
 router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
   try {
-    const { 
-      username, 
-      password, 
-      fullName, 
-      phoneNumber, 
-      booth_id, 
-      aci_id, 
-      aci_name 
+    const {
+      username,
+      password,
+      fullName,
+      phoneNumber,
+      booth_id,
+      aci_id,
+      aci_name
     } = req.body;
 
-    console.log("Create booth agent request:", { 
+    console.log("Create booth agent request:", {
       username, fullName, phoneNumber, booth_id, aci_id,
-      currentUserRole: req.user.role, currentUserAC: req.user.assignedAC 
+      currentUserRole: req.user.role, currentUserAC: req.user.assignedAC
     });
 
     // Validate required fields
@@ -904,7 +920,7 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       // L1 (ACIM) can only create in their AC
       const requestedACNum = typeof aci_id === 'number' ? aci_id : parseInt(aci_id);
       const userAC = typeof req.user.assignedAC === 'number' ? req.user.assignedAC : parseInt(req.user.assignedAC);
-      
+
       if (requestedACNum !== userAC) {
         return res.status(403).json({
           success: false,
@@ -915,7 +931,7 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       // L2 (ACI) can only create in their AC
       const requestedACNum = typeof aci_id === 'number' ? aci_id : parseInt(aci_id);
       const userAC = typeof req.user.assignedAC === 'number' ? req.user.assignedAC : parseInt(req.user.assignedAC);
-      
+
       if (requestedACNum !== userAC) {
         return res.status(403).json({
           success: false,
@@ -936,9 +952,9 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
 
     // Check if booth_id is a valid MongoDB ObjectId (24 hex chars, not starting with BOOTH)
     const isObjectId = mongoose.Types.ObjectId.isValid(booth_id) &&
-                       booth_id.length === 24 &&
-                       !booth_id.startsWith('BOOTH') &&
-                       !booth_id.startsWith('voter-booth-');
+      booth_id.length === 24 &&
+      !booth_id.startsWith('BOOTH') &&
+      !booth_id.startsWith('voter-booth-');
 
     if (isObjectId) {
       booth = await Booth.findById(booth_id);
@@ -1074,7 +1090,7 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       role: { $in: ["Booth Agent", "BoothAgent"] },
       isActive: true
     });
-    
+
     // Generate booth_agent_id: {booth_id}-{sequence}
     let sequence = existingAgentsCount + 1;
     let booth_agent_id = `${boothIdentifier}-${sequence}`;
@@ -1087,7 +1103,7 @@ router.post("/users/booth-agent", isAuthenticated, async (req, res) => {
       booth_agent_id = `${boothIdentifier}-${sequence}`;
       existingAgentId = await User.findOne({ booth_agent_id });
     }
-    
+
     console.log(`Generated booth_agent_id: ${booth_agent_id} for booth ${boothIdentifier} (${existingAgentsCount} existing agents)`);
 
     // Hash password
@@ -1641,7 +1657,7 @@ router.post("/booths", isAuthenticated, canManageBooths, validateACAccess, async
   try {
     // Support both acId/acName and ac_id/ac_name for backward compatibility
     const { boothName, boothCode, acId, acName, ac_id, ac_name, address, totalVoters } = req.body;
-    
+
     // Normalize field names
     const normalizedAcId = parseInt(acId || ac_id);
     const normalizedAcName = acName || ac_name;
@@ -1842,12 +1858,19 @@ router.get("/booth-agents", isAuthenticated, canManageBoothAgents, validateACAcc
   try {
     const { ac, assigned, search } = req.query;
 
-    let query = { 
+    // OPTIMIZATION: Check cache first (10 min TTL for booth agents)
+    const cacheKey = `booth-agents:${req.user.assignedAC || 'all'}:${ac || 'all'}:${assigned || 'all'}:${search || ''}`;
+    const cached = getCache(cacheKey, TTL.MEDIUM);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    let query = {
       $or: [
         { role: "Booth Agent" },
         { role: "BoothAgent" }
       ],
-      isActive: true 
+      isActive: true
     };
 
     // Apply AC filter for L2 only (L0 and L1 can access all ACs)
@@ -1868,16 +1891,34 @@ router.get("/booth-agents", isAuthenticated, canManageBoothAgents, validateACAcc
       query.assignedAC = acId;
     }
 
-    // Search by name or phone
+    // BUGFIX: Search by name or phone (preserve role filter)
     if (search) {
       const searchRegex = new RegExp(search, "i");
-      query.$or = [{ name: searchRegex }, { phone: searchRegex }];
+      const searchCondition = {
+        $or: [{ name: searchRegex }, { phone: searchRegex }]
+      };
+
+      // Combine with existing query using $and to preserve role filter
+      if (query.$or) {
+        query = {
+          $and: [
+            { $or: query.$or },  // Preserve role filter
+            searchCondition
+          ],
+          isActive: query.isActive,
+          ...(query.assignedAC && { assignedAC: query.assignedAC })
+        };
+      } else {
+        Object.assign(query, searchCondition);
+      }
     }
 
+    // OPTIMIZATION: Use .lean() for better performance (returns plain JS objects)
     const agents = await User.find(query)
       .select("-password -passwordHash")
       .populate("assignedBoothId", "boothName boothCode booth_id boothNumber ac_id")
-      .sort({ name: 1 });
+      .sort({ name: 1 })
+      .lean();
 
     // If filtering by assigned status, check booth assignments
     let filteredAgents = agents;
@@ -1936,11 +1977,16 @@ router.get("/booth-agents", isAuthenticated, canManageBoothAgents, validateACAcc
       };
     });
 
-    res.json({
+    const response = {
       success: true,
       count: transformedAgents.length,
       agents: transformedAgents,
-    });
+    };
+
+    // OPTIMIZATION: Cache the result (10 min TTL)
+    setCache(cacheKey, response, TTL.MEDIUM);
+
+    res.json(response);
   } catch (error) {
     console.error("Error fetching booth agents:", error);
     res.status(500).json({

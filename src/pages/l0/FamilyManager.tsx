@@ -31,7 +31,7 @@ interface Pagination {
 
 export const FamilyManager = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [acFilter, setAcFilter] = useState<string>('111'); // Default to AC 111 (has data)
+  const [acFilter, setAcFilter] = useState<string>(''); // Require explicit AC selection
   const [boothFilter, setBoothFilter] = useState<string>('all');
   const [selectedFamily, setSelectedFamily] = useState<any>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -39,7 +39,7 @@ export const FamilyManager = () => {
   // API state
   const [families, setFamilies] = useState<Family[]>([]);
   const [booths, setBooths] = useState<{ boothId: string; boothNo: string; boothName: string; label: string }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
