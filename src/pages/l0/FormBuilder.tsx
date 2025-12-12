@@ -79,7 +79,7 @@ export const FormBuilder = () => {
   const resolvedFormId = formId ?? 'new';
   const isNewForm = resolvedFormId === 'new';
   const redirectPath =
-    user?.role === 'L0' ? '/l0/survey-bank' : user?.role === 'L1' ? '/l1/survey-forms' : '/l2/survey-forms';
+    user?.role === 'L0' ? '/l0/survey-bank' : user?.role === 'L1' ? '/l1/surveys' : '/l2/survey-forms';
 
   const [formData, setFormData] = useState<FormData>({
     title: '',

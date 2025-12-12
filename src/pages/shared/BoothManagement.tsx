@@ -38,15 +38,17 @@ export const BoothManagement = () => {
   };
 
   const getDefaultAcId = () => {
-    // L1 and L2 users should use their assigned AC
-    if ((user?.role === 'L1' || user?.role === 'L2') && user.assignedAC) {
+    // L2 users should use their assigned AC
+    // L1 (ACIM) users have access to ALL ACs like L0, so no default
+    if (user?.role === 'L2' && user.assignedAC) {
       return user.assignedAC;
     }
-    return null; // L0 users have no default - they must select
+    return null; // L0 and L1 users have no default - they must select
   };
 
   const getDefaultAcName = () => {
-    if (user?.role === 'L1' || user?.role === 'L2') {
+    // Only L2 users have fixed AC
+    if (user?.role === 'L2' && user.assignedAC) {
       return user.aciName || getConstituencyName(user.assignedAC) || '';
     }
     return '';
@@ -60,9 +62,9 @@ export const BoothManagement = () => {
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
 
-  // AC Filter state for Admin (L0) users - L1/L2 users have fixed AC
+  // AC Filter state for Admin (L0) and ACIM (L1) users - L2 users have fixed AC
   const [selectedAC, setSelectedAC] = useState<number | null>(
-    (user?.role === 'L1' || user?.role === 'L2') ? user.assignedAC : null
+    user?.role === 'L2' ? user.assignedAC : null
   );
 
   // Pagination state
@@ -90,8 +92,8 @@ export const BoothManagement = () => {
 
   // Keep AC defaults in sync with authenticated user
   useEffect(() => {
-    // L1 and L2 users should have their assigned AC
-    const isRestrictedRole = user?.role === 'L1' || user?.role === 'L2';
+    // Only L2 users have fixed AC assignment
+    const isRestrictedRole = user?.role === 'L2';
 
     setNewBooth((prev) => {
       const updatedAcId = isRestrictedRole && user.assignedAC ? user.assignedAC : prev.acId;
@@ -106,7 +108,7 @@ export const BoothManagement = () => {
       };
     });
 
-    // Also update selectedAC for L1/L2 users if not already set
+    // Also update selectedAC for L2 users if not already set
     if (isRestrictedRole && user.assignedAC && !selectedAC) {
       setSelectedAC(user.assignedAC);
     }
@@ -320,7 +322,7 @@ export const BoothManagement = () => {
           <div>
             <h1 className="text-4xl font-bold mb-2">Booth Management</h1>
             <p className="text-muted-foreground">
-              {(user?.role === 'L1' || user?.role === 'L2')
+              {user?.role === 'L2'
                 ? `Manage booths for AC ${user.assignedAC || '...'} - ${getConstituencyName(user.assignedAC)}`
                 : selectedAC
                   ? `Viewing booths for AC ${selectedAC} - ${getConstituencyName(selectedAC)}`
@@ -328,8 +330,8 @@ export const BoothManagement = () => {
             </p>
           </div>
           <div className="flex items-center gap-4">
-            {/* AC Filter for Admin (L0) users only - L1/L2 have fixed AC */}
-            {user?.role === 'L0' && (
+            {/* AC Filter for Admin (L0) and ACIM (L1) users - L2 has fixed AC */}
+            {(user?.role === 'L0' || user?.role === 'L1') && (
               <Select
                 value={selectedAC?.toString() || 'all'}
                 onValueChange={handleACChange}
@@ -371,8 +373,8 @@ export const BoothManagement = () => {
                     Booth number will be auto-generated based on existing booths in this AC
                   </p>
                 </div>
-                {/* Only L0 can select AC - L1/L2 have fixed AC */}
-                {user?.role === 'L0' && (
+                {/* L0 and L1 can select AC - L2 has fixed AC */}
+                {(user?.role === 'L0' || user?.role === 'L1') && (
                   <div className="space-y-2">
                     <Label htmlFor="ac">Assembly Constituency <span className="text-destructive">*</span></Label>
                     <Select
@@ -579,8 +581,8 @@ export const BoothManagement = () => {
                   onChange={(e) => setEditBooth({...editBooth, boothName: e.target.value})}
                 />
               </div>
-              {/* Only L0 can change AC - L1/L2 have fixed AC */}
-              {user?.role === 'L0' && (
+              {/* L0 and L1 can change AC - L2 has fixed AC */}
+              {(user?.role === 'L0' || user?.role === 'L1') && (
                 <div className="space-y-2">
                   <Label htmlFor="editAc">Assembly Constituency <span className="text-destructive">*</span></Label>
                   <Select

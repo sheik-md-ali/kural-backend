@@ -62,18 +62,14 @@ export const GlobalAnalytics = () => {
 
           setAcPerformance(mappedData);
 
-          // Calculate totals
-          const totalVoters = mappedData.reduce((sum, ac) => sum + ac.voters, 0);
-          const totalSurveyedMembers = mappedData.reduce((sum, ac) => sum + ac.surveyedMembers, 0);
-          const avgCompletion = mappedData.length > 0
-            ? Math.round((mappedData.reduce((sum, ac) => sum + ac.completion, 0) / mappedData.length) * 10) / 10
-            : 0;
-
+          // Use totals from API (includes actual families count)
           setTotals({
-            totalVoters,
-            totalFamilies: Math.round(totalVoters / 3.5),
-            totalSurveyedMembers,
-            avgCompletion,
+            totalVoters: data.totals?.totalVoters || mappedData.reduce((sum, ac) => sum + ac.voters, 0),
+            totalFamilies: data.totals?.totalFamilies || 0,
+            totalSurveyedMembers: data.totals?.totalSurveyedMembers || mappedData.reduce((sum, ac) => sum + ac.surveyedMembers, 0),
+            avgCompletion: mappedData.length > 0
+              ? Math.round((mappedData.reduce((sum, ac) => sum + ac.completion, 0) / mappedData.length) * 10) / 10
+              : 0,
           });
         }
       } catch (error) {
@@ -307,7 +303,11 @@ export const GlobalAnalytics = () => {
               {acPerformance.length > 0 ? (
                 <>
                   {(() => {
-                    const highest = [...acPerformance].sort((a, b) => b.completion - a.completion)[0];
+                    const highest = [...acPerformance].sort((a, b) => {
+                      // First sort by completion rate, then by surveys as tiebreaker
+                      if (b.completion !== a.completion) return b.completion - a.completion;
+                      return b.surveyedMembers - a.surveyedMembers;
+                    })[0];
                     return (
                       <>
                         <p className="text-2xl font-bold text-primary">{highest.ac}</p>
@@ -332,7 +332,11 @@ export const GlobalAnalytics = () => {
               {acPerformance.length > 0 ? (
                 <>
                   {(() => {
-                    const lowest = [...acPerformance].sort((a, b) => a.completion - b.completion)[0];
+                    const lowest = [...acPerformance].sort((a, b) => {
+                      // First sort by completion rate (ascending), then by surveys as tiebreaker (ascending)
+                      if (a.completion !== b.completion) return a.completion - b.completion;
+                      return a.surveyedMembers - b.surveyedMembers;
+                    })[0];
                     return (
                       <>
                         <p className="text-2xl font-bold text-primary">{lowest.ac}</p>

@@ -43,6 +43,8 @@ export const ACAnalyticsDashboard = () => {
             acName: string | null;
             voters: number;
             surveyedMembers: number;
+            families: number;
+            booths: number;
             completion: number;
             agents: number;
           }) => {
@@ -51,9 +53,9 @@ export const ACAnalyticsDashboard = () => {
               acNumber: String(ac.acNumber),
               name: ac.acName || constituency?.name || `AC ${ac.acNumber}`,
               voters: ac.voters || 0,
-              families: Math.round(ac.voters / 3.5) || 0, // Estimate families
+              families: ac.families || 0, // Use actual families from API
               surveys: ac.surveyedMembers || 0,
-              booths: Math.round(ac.voters / 25) || 0, // Estimate booths
+              booths: ac.booths || 0, // Use actual booths from API
               completion: ac.completion || 0,
             };
           });

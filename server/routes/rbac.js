@@ -438,21 +438,15 @@ router.get("/users", isAuthenticated, async (req, res) => {
 
     // L0 can see all users (including inactive), L1/L2 only see active users
     const query = {};
-    let hasL1Or = false;
 
     // Only filter by isActive for L1 and L2, L0 can see all users
     if (req.user.role !== "L0") {
       query.isActive = true;
     }
 
-    // L1 (ACIM) can only see users they created or in their AC
-    if (req.user.role === "L1") {
-      query.$or = [
-        { createdBy: req.user._id },
-        { assignedAC: req.user.assignedAC },
-      ];
-      hasL1Or = true;
-    }
+    // L1 (ACIM) can see ALL users across all ACs (no AC restriction)
+    // L0 can also see all users
+    // Only L2 is restricted to their assigned AC
 
     // L2 (ACI) can only see users in their AC
     if (req.user.role === "L2") {
@@ -463,18 +457,7 @@ router.get("/users", isAuthenticated, async (req, res) => {
     if (role) {
       // Handle both "Booth Agent" and "BoothAgent" for backward compatibility
       if (role === "Booth Agent" || role === "BoothAgent") {
-        const roleFilter = { $or: [{ role: "Booth Agent" }, { role: "BoothAgent" }] };
-        
-        // If there's already a $or from L1 filter, combine with $and
-        if (hasL1Or) {
-          query.$and = [
-            { $or: query.$or },
-            roleFilter
-          ];
-          delete query.$or;
-        } else {
-          query.$or = roleFilter.$or;
-        }
+        query.$or = [{ role: "Booth Agent" }, { role: "BoothAgent" }];
       } else {
         query.role = role;
       }
@@ -483,8 +466,8 @@ router.get("/users", isAuthenticated, async (req, res) => {
     // Filter by AC
     if (ac) {
       const acId = parseInt(ac);
-      // For L1/L2, ensure they can only filter by their own AC
-      if ((req.user.role === "L1" || req.user.role === "L2") && acId !== req.user.assignedAC) {
+      // L2 can only filter by their own AC, L0 and L1 can access any AC
+      if (req.user.role === "L2" && acId !== req.user.assignedAC) {
         return res.status(403).json({
           success: false,
           message: "Access denied to users in this AC",
@@ -602,19 +585,28 @@ router.post("/users", isAuthenticated, async (req, res) => {
     if (req.user.role === "L0") {
       // L0 can create anyone
     } else if (req.user.role === "L1") {
-      // L1 (ACIM) can only create L2 (ACI) and Booth Agent
-      if (role !== "L2" && role !== "Booth Agent" && role !== "BoothAgent") {
+      // L1 (ACIM) can create L1, L2 (ACI) and Booth Agent - but NOT L0
+      if (role === "L0") {
         return res.status(403).json({
           success: false,
-          message: "ACIM can only create ACI and Booth Agent users",
+          message: "ACIM cannot create System Admin users",
         });
       }
-      // Must be in same AC (compare as numbers)
+      // L1 (ACIM) can access ALL ACs, so no AC restriction needed
+    } else if (req.user.role === "L2") {
+      // L2 can only create Booth Agents in their own AC
+      if (role !== "Booth Agent" && role !== "BoothAgent") {
+        return res.status(403).json({
+          success: false,
+          message: "ACI can only create Booth Agent users",
+        });
+      }
+      // Must be in same AC
       const requestedAC = aci_id || assignedAC;
       const requestedACNum = typeof requestedAC === 'number' ? requestedAC : parseInt(requestedAC);
       const userAC = typeof req.user.assignedAC === 'number' ? req.user.assignedAC : parseInt(req.user.assignedAC);
-      
-      if ((role === "L2" || role === "Booth Agent" || role === "BoothAgent") && requestedAC && requestedACNum !== userAC) {
+
+      if (requestedAC && requestedACNum !== userAC) {
         return res.status(403).json({
           success: false,
           message: `You can only create users in your assigned AC (${userAC})`,
@@ -1182,12 +1174,15 @@ router.put("/users/:userId", isAuthenticated, async (req, res) => {
 
     // Check update permissions
     if (req.user.role !== "L0") {
-      // L1 can only update users they created
-      if (req.user.role === "L1" && user.createdBy?.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: "You can only update users you created",
-        });
+      // L1 (ACIM) can update L1, L2, and BoothAgent users - but NOT L0
+      if (req.user.role === "L1") {
+        if (user.role === "L0") {
+          return res.status(403).json({
+            success: false,
+            message: "ACIM cannot update System Admin users",
+          });
+        }
+        // L1 can update all other user types (L1, L2, BoothAgent)
       }
       // L2 can update booth agents in their AC
       else if (req.user.role === "L2") {
@@ -1205,7 +1200,7 @@ router.put("/users/:userId", isAuthenticated, async (req, res) => {
             message: "You can only update booth agents in your assigned AC",
           });
         }
-      } else if (req.user.role !== "L1" && req.user.role !== "L2") {
+      } else {
         return res.status(403).json({
           success: false,
           message: "You don't have permission to update users",
@@ -1420,17 +1415,15 @@ router.delete("/users/:userId", isAuthenticated, async (req, res) => {
       }
     }
 
-    // L1 users can only delete users they created
+    // L1 (ACIM) can delete L1, L2, and BoothAgent users - but NOT L0
     if (req.user.role === "L1") {
-      const userCreatedBy = user.createdBy?.toString();
-      const currentUserId = req.user._id.toString();
-
-      if (userCreatedBy !== currentUserId) {
+      if (user.role === "L0") {
         return res.status(403).json({
           success: false,
-          message: "You can only delete users you created",
+          message: "ACIM cannot delete System Admin users",
         });
       }
+      // L1 can delete all other user types (L1, L2, BoothAgent)
     }
 
     // If user is a booth agent, remove them from booth's assignedAgents before deletion
@@ -1840,15 +1833,16 @@ router.get("/booth-agents", isAuthenticated, canManageBoothAgents, validateACAcc
       isActive: true 
     };
 
-    // Apply AC filter for L1/L2
-    if (req.user.role === "L1" || req.user.role === "L2") {
+    // Apply AC filter for L2 only (L0 and L1 can access all ACs)
+    if (req.user.role === "L2") {
       query.assignedAC = req.user.assignedAC;
     }
 
     // Additional AC filter from query params
     if (ac) {
       const acId = parseInt(ac);
-      if (req.user.role !== "L0" && acId !== req.user.assignedAC) {
+      // L2 can only access their own AC, L0 and L1 can access any AC
+      if (req.user.role === "L2" && acId !== req.user.assignedAC) {
         return res.status(403).json({
           success: false,
           message: "Access denied to agents in this AC",
@@ -2232,12 +2226,13 @@ router.get("/dashboard/stats", isAuthenticated, validateACAccess, async (req, re
  */
 router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
   try {
+    // L0 and L1 have access to ALL ACs, L2 is restricted to assignedAC
     const limitToAc =
-      req.user.role === "L1" || req.user.role === "L2"
+      req.user.role === "L2"
         ? resolveAssignedACFromUser(req.user)
         : null;
 
-    if ((req.user.role === "L1" || req.user.role === "L2") && limitToAc === null) {
+    if (req.user.role === "L2" && limitToAc === null) {
       return res.status(403).json({
         success: false,
         message: "No AC assigned to your account.",
@@ -2254,7 +2249,7 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
       return res.json(cached);
     }
 
-    // Aggregation pipeline for voter stats
+    // Aggregation pipeline for voter stats including families and booths
     const aggregationPipeline = [
       {
         $group: {
@@ -2269,6 +2264,19 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
               ],
             },
           },
+          // Count unique families (using familyId - camelCase field)
+          uniqueFamilies: { $addToSet: "$familyId" },
+          // Count unique booths
+          uniqueBooths: { $addToSet: "$booth_id" },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          totalMembers: 1,
+          surveyedMembers: 1,
+          families: { $size: "$uniqueFamilies" },
+          booths: { $size: "$uniqueBooths" },
         },
       },
       { $sort: { "_id.acId": 1 } },
@@ -2335,12 +2343,16 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
       const acName = entry._id.acName;
       const voters = entry.totalMembers || 0;
       const surveyedMembers = entry.surveyedMembers || 0;
+      const families = entry.families || 0;
+      const booths = entry.booths || 0;
 
       // Merge with existing data if AC already exists (handles duplicates)
       if (acDataMap.has(acId)) {
         const existing = acDataMap.get(acId);
         existing.voters += voters;
         existing.surveyedMembers += surveyedMembers;
+        existing.families += families;
+        existing.booths += booths;
         // Keep the most complete acName
         if (!existing.acName && acName) {
           existing.acName = acName;
@@ -2351,6 +2363,8 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
           acName: acName || null,
           voters,
           surveyedMembers,
+          families,
+          booths,
         });
       }
     });
@@ -2370,6 +2384,8 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
         acName: entry.acName,
         voters: entry.voters,
         surveyedMembers: entry.surveyedMembers,
+        families: entry.families || 0,
+        booths: entry.booths || 0,
         completion,
         admins: counts.admins,
         moderators: counts.moderators,
@@ -2386,6 +2402,8 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
           acName: null,
           voters: 0,
           surveyedMembers: 0,
+          families: 0,
+          booths: 0,
           completion: 0,
           admins: counts.admins,
           moderators: counts.moderators,
@@ -2408,6 +2426,8 @@ router.get("/dashboard/ac-overview", isAuthenticated, async (req, res) => {
         (sum, ac) => sum + (ac.surveyedMembers || 0),
         0,
       ),
+      totalFamilies: acPerformance.reduce((sum, ac) => sum + (ac.families || 0), 0),
+      totalBooths: acPerformance.reduce((sum, ac) => sum + (ac.booths || 0), 0),
     };
 
     const response = {
@@ -2451,8 +2471,8 @@ router.get("/booths/:boothId/agents", isAuthenticated, async (req, res) => {
       });
     }
 
-    // Check AC access for L1 and L2
-    if ((req.user.role === "L1" || req.user.role === "L2") && booth.ac_id !== req.user.assignedAC) {
+    // Check AC access for L2 only (L0 and L1 can access all ACs)
+    if (req.user.role === "L2" && booth.ac_id !== req.user.assignedAC) {
       return res.status(403).json({
         success: false,
         message: "Access denied to this booth",

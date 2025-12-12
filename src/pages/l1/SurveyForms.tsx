@@ -19,8 +19,8 @@ export const SurveyForms = () => {
     const loadSurveys = async () => {
       setIsLoading(true);
       try {
-        // L1 should see surveys from L1 and L2 roles
-        const data = await fetchSurveys({ role: 'L1,L2' });
+        // L1 (ACIM) should see all surveys from all roles (L0, L1, L2) like admin
+        const data = await fetchSurveys();
         setForms(data);
       } catch (error) {
         console.error('Failed to load surveys', error);
@@ -97,7 +97,7 @@ export const SurveyForms = () => {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-4xl font-bold mb-2">Survey Forms Management</h1>
-            <p className="text-muted-foreground">Create and manage survey forms for all constituencies</p>
+            <p className="text-muted-foreground">Create and manage survey forms</p>
           </div>
           <Button onClick={handleCreateNewForm}>
             <Plus className="mr-2 h-4 w-4" />
@@ -111,8 +111,8 @@ export const SurveyForms = () => {
               <thead className="bg-muted">
                 <tr>
                   <th className="px-4 py-3 text-left text-sm font-semibold">Form Name</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Scope</th>
                   <th className="px-4 py-3 text-left text-sm font-semibold">Questions</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Assigned ACs</th>
                   <th className="px-4 py-3 text-left text-sm font-semibold">Date Created</th>
                   <th className="px-4 py-3 text-left text-sm font-semibold">Status</th>
                   <th className="px-4 py-3 text-left text-sm font-semibold">Actions</th>
@@ -134,10 +134,24 @@ export const SurveyForms = () => {
                           <span>{form.title}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm">{form.questions.length} questions</td>
                       <td className="px-4 py-3 text-sm">
-                        {Array.isArray(form.assignedACs) ? form.assignedACs.length : 0} ACs
+                        {form.assignedACs && form.assignedACs.length > 0 ? (
+                          form.assignedACs.length === 1 ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                              AC {form.assignedACs[0]}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                              {form.assignedACs.length} ACs
+                            </span>
+                          )
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+                            Universal
+                          </span>
+                        )}
                       </td>
+                      <td className="px-4 py-3 text-sm">{form.questions.length} questions</td>
                       <td className="px-4 py-3 text-sm">
                         {form.createdAt ? new Date(form.createdAt).toLocaleDateString() : '—'}
                       </td>
@@ -182,7 +196,7 @@ export const SurveyForms = () => {
                 ) : (
                   <tr>
                     <td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">
-                      No surveys found. Create a form to assign it to constituencies.
+                      No surveys found. Create your first form to get started.
                     </td>
                   </tr>
                 )}

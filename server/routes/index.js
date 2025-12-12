@@ -86,5 +86,6 @@ export function registerRoutes(app) {
   // RBAC routes
   app.use("/api/rbac", rbacRoutes);
 
+
   console.log("✓ All routes registered");
 }

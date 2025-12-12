@@ -1,10 +1,19 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Search } from 'lucide-react';
+import { MapPin, Search, Users, FileCheck, Loader2 } from 'lucide-react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { CONSTITUENCIES, type Constituency } from '@/constants/constituencies';
+import { api } from '@/lib/api';
+
+interface ACStats {
+  acNumber: number;
+  voters: number;
+  surveyedMembers: number;
+  completion: number;
+}
 
 /**
  * ConstituencySelector Component
@@ -18,7 +27,43 @@ import { CONSTITUENCIES, type Constituency } from '@/constants/constituencies';
  */
 export const ConstituencySelector = () => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [acStats, setAcStats] = useState<Map<number, ACStats>>(new Map());
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
   const navigate = useNavigate();
+
+  // Fetch real-time AC stats
+  useEffect(() => {
+    const fetchACStats = async () => {
+      try {
+        setIsLoadingStats(true);
+        const data = await api.get('/rbac/dashboard/ac-overview');
+
+        if (data.success && data.acPerformance) {
+          const statsMap = new Map<number, ACStats>();
+          data.acPerformance.forEach((ac: {
+            acNumber: number;
+            voters: number;
+            surveyedMembers: number;
+            completion: number;
+          }) => {
+            statsMap.set(ac.acNumber, {
+              acNumber: ac.acNumber,
+              voters: ac.voters || 0,
+              surveyedMembers: ac.surveyedMembers || 0,
+              completion: ac.completion || 0,
+            });
+          });
+          setAcStats(statsMap);
+        }
+      } catch (error) {
+        console.error('Error fetching AC stats:', error);
+      } finally {
+        setIsLoadingStats(false);
+      }
+    };
+
+    fetchACStats();
+  }, []);
 
   /**
    * Filters constituencies based on search term
@@ -44,9 +89,11 @@ export const ConstituencySelector = () => {
         <SearchBar value={searchTerm} onChange={setSearchTerm} />
 
         {/* Constituency Grid */}
-        <ConstituencyGrid 
+        <ConstituencyGrid
           constituencies={filteredConstituencies}
           onSelect={handleConstituencyClick}
+          acStats={acStats}
+          isLoadingStats={isLoadingStats}
         />
       </div>
     </DashboardLayout>
@@ -93,48 +140,91 @@ const SearchBar = ({ value, onChange }: SearchBarProps) => (
 interface ConstituencyGridProps {
   constituencies: Constituency[];
   onSelect: (acNumber: number) => void;
+  acStats: Map<number, ACStats>;
+  isLoadingStats: boolean;
 }
 
-const ConstituencyGrid = ({ constituencies, onSelect }: ConstituencyGridProps) => (
+const ConstituencyGrid = ({ constituencies, onSelect, acStats, isLoadingStats }: ConstituencyGridProps) => (
   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
     {constituencies.map((ac) => (
-      <ConstituencyCard 
+      <ConstituencyCard
         key={ac.number}
         constituency={ac}
         onClick={() => onSelect(ac.number)}
+        stats={acStats.get(ac.number)}
+        isLoadingStats={isLoadingStats}
       />
     ))}
   </div>
 );
 
 /**
- * Individual constituency card with hover effects
+ * Individual constituency card with hover effects and stats
  */
 interface ConstituencyCardProps {
   constituency: Constituency;
   onClick: () => void;
+  stats?: ACStats;
+  isLoadingStats: boolean;
 }
 
-const ConstituencyCard = ({ constituency, onClick }: ConstituencyCardProps) => (
+const ConstituencyCard = ({ constituency, onClick, stats, isLoadingStats }: ConstituencyCardProps) => (
   <Card
     className="p-5 cursor-pointer hover:shadow-xl transition-all duration-200 border-2 hover:border-primary/50 group bg-card"
     onClick={onClick}
   >
-    <div className="flex items-center gap-4">
-      {/* Icon */}
-      <div className="p-3 rounded-xl bg-primary/10 group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-200 flex-shrink-0">
-        <MapPin className="h-5 w-5" />
+    <div className="space-y-4">
+      <div className="flex items-center gap-4">
+        {/* Icon */}
+        <div className="p-3 rounded-xl bg-primary/10 group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-200 flex-shrink-0">
+          <MapPin className="h-5 w-5" />
+        </div>
+
+        {/* Constituency info */}
+        <div className="flex-1 min-w-0">
+          <p className="text-xl font-bold text-primary mb-1">
+            AC {constituency.number}
+          </p>
+          <p className="text-sm font-semibold text-foreground/80 group-hover:text-primary transition-colors leading-tight line-clamp-2">
+            {constituency.name}
+          </p>
+        </div>
       </div>
-      
-      {/* Constituency info */}
-      <div className="flex-1 min-w-0">
-        <p className="text-xl font-bold text-primary mb-1">
-          AC {constituency.number}
-        </p>
-        <p className="text-sm font-semibold text-foreground/80 group-hover:text-primary transition-colors leading-tight line-clamp-2">
-          {constituency.name}
-        </p>
-      </div>
+
+      {/* Stats Section */}
+      {isLoadingStats ? (
+        <div className="flex items-center justify-center py-2">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : stats ? (
+        <div className="space-y-3 pt-2 border-t">
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <Users className="h-3.5 w-3.5" />
+              <span>Voters</span>
+            </div>
+            <span className="font-semibold">{stats.voters.toLocaleString()}</span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              <FileCheck className="h-3.5 w-3.5" />
+              <span>Surveyed</span>
+            </div>
+            <span className="font-semibold">{stats.surveyedMembers.toLocaleString()}</span>
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Completion</span>
+              <span className="font-semibold">{stats.completion}%</span>
+            </div>
+            <Progress value={stats.completion} className="h-1.5" />
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground text-center py-2 border-t">
+          No stats available
+        </div>
+      )}
     </div>
   </Card>
 );

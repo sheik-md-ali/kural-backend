@@ -1,508 +1,781 @@
-import { DashboardLayout } from '@/components/DashboardLayout';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UserPlus, Edit2, Trash2, Eye, Loader2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { useToast } from '@/components/ui/use-toast';
-import { api } from '@/lib/api';
-import { CONSTITUENCIES } from '@/constants/constituencies';
+import React, { useState, useEffect } from "react";
+import { Plus, Search, Edit2, Trash2, Users, UserPlus, UserCog } from "lucide-react";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { CONSTITUENCIES } from "@/constants/constituencies";
 
-interface Moderator {
+interface User {
   _id: string;
   name: string;
   email?: string;
   phone?: string;
+  role: string;
   assignedAC?: number;
+  aci_name?: string;
+  assignedBoothId?: {
+    _id: string;
+    boothName: string;
+    boothCode: string;
+    booth_id?: string;
+  };
+  booth_id?: string;
+  booth_agent_id?: string;
+  createdBy?: {
+    _id: string;
+    name: string;
+    role: string;
+  };
   status: string;
   isActive: boolean;
   createdAt: string;
 }
 
-export const ModeratorManagement = () => {
+interface Booth {
+  _id: string;
+  boothName: string;
+  boothCode: string;
+  ac_id: number;
+}
+
+interface UserFormData {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+  role: string;
+  assignedAC: string;
+  aci_name: string;
+  assignedBoothId: string;
+  status: string;
+}
+
+export const ModeratorManagement: React.FC = () => {
   const { toast } = useToast();
-  const [moderators, setModerators] = useState<Moderator[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [isEditOpen, setIsEditOpen] = useState(false);
-  const [selectedModerator, setSelectedModerator] = useState<Moderator | null>(null);
-  const [viewModerator, setViewModerator] = useState<Moderator | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { user: currentUser } = useAuth();
+  const [users, setUsers] = useState<User[]>([]);
+  const [booths, setBooths] = useState<Booth[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeTab, setActiveTab] = useState<string>("L1");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [acFilter, setAcFilter] = useState<string>("all");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
 
-  // Form states
-  const [newModerator, setNewModerator] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    assignedAC: '',
-    password: '',
+  const [formData, setFormData] = useState<UserFormData>({
+    name: "",
+    email: "",
+    phone: "",
+    password: "",
+    role: "L2",
+    assignedAC: "",
+    aci_name: "",
+    assignedBoothId: "",
+    status: "Active",
   });
 
-  const [editModerator, setEditModerator] = useState({
-    _id: '',
-    name: '',
-    email: '',
-    phone: '',
-    assignedAC: '',
-    status: 'Active',
-  });
-
-  // Fetch moderators (L2 users)
   useEffect(() => {
-    fetchModerators();
-  }, []);
+    fetchUsers();
+    fetchBooths();
+  }, [activeTab, statusFilter, acFilter]);
 
-  const fetchModerators = async () => {
+  const fetchBooths = async (acId?: string) => {
     try {
-      setIsLoading(true);
-      const response = await api.get('/rbac/users?role=L2');
+      const params = acId ? `?ac=${acId}` : '';
+      const response = await api.get(`/rbac/booths${params}`);
+      setBooths(response.booths || []);
+    } catch (error: any) {
+      console.error("Failed to fetch booths:", error);
+    }
+  };
+
+  // Fetch booths when AC is selected for BoothAgent role
+  useEffect(() => {
+    if (formData.role === 'BoothAgent' && formData.assignedAC) {
+      setBooths([]);
+      setFormData(prev => ({ ...prev, assignedBoothId: '' }));
+      fetchBooths(formData.assignedAC);
+    } else if (!formData.assignedAC) {
+      setBooths([]);
+    }
+  }, [formData.assignedAC, formData.role]);
+
+  const fetchUsers = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+
+      const roleMap: { [key: string]: string } = {
+        "L1": "L1",
+        "L2": "L2",
+        "BoothAgent": "BoothAgent"
+      };
+
+      if (activeTab && roleMap[activeTab]) {
+        params.append("role", roleMap[activeTab]);
+      }
+
+      if (statusFilter !== "all") {
+        params.append("status", statusFilter);
+      }
+
+      if ((activeTab === "BoothAgent" || activeTab === "L2") && acFilter !== "all") {
+        params.append("ac", acFilter);
+      }
+
+      const response = await api.get(`/rbac/users?${params.toString()}`);
       const usersList = response.users || [];
-      setModerators(usersList);
+      setUsers(usersList);
     } catch (error: any) {
-      console.error('Error fetching moderators:', error);
+      console.error("Error fetching users:", error);
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to fetch moderators',
-        variant: 'destructive',
+        title: "Error",
+        description: error.message || "Failed to fetch users",
+        variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  const getACName = (acNumber?: number): string => {
-    if (!acNumber) return 'Not Assigned';
-    const constituency = CONSTITUENCIES.find(c => c.number === acNumber);
-    return constituency ? `${acNumber} - ${constituency.name}` : `AC ${acNumber}`;
-  };
-
-  // Handle adding a new moderator
-  const handleAddModerator = async () => {
-    if (!newModerator.name || !newModerator.assignedAC || !newModerator.password) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please fill in all required fields (Name, AC, and Password).',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!newModerator.email && !newModerator.phone) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please provide either email or phone number.',
-        variant: 'destructive',
-      });
-      return;
-    }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
 
     try {
-      setIsSubmitting(true);
-      await api.post('/rbac/users', {
-        name: newModerator.name,
-        email: newModerator.email || undefined,
-        phone: newModerator.phone || undefined,
-        password: newModerator.password,
-        role: 'L2',
-        assignedAC: parseInt(newModerator.assignedAC),
-        status: 'Active',
-      });
+      if (isEditMode && editingUser) {
+        const updateData: any = {
+          name: formData.name,
+          email: formData.email,
+          phone: formData.phone,
+          role: formData.role,
+          status: formData.status,
+        };
 
-      // Reset form
-      setNewModerator({
-        name: '',
-        email: '',
-        phone: '',
-        assignedAC: '',
-        password: '',
-      });
+        // Don't set assignedAC for L1 (ACIM) users
+        if (formData.role !== "L1") {
+          if (formData.assignedAC) {
+            updateData.assignedAC = parseInt(formData.assignedAC);
+          }
+          if (formData.aci_name) {
+            updateData.aci_name = formData.aci_name;
+          }
+        } else {
+          updateData.assignedAC = undefined;
+          updateData.aci_name = undefined;
+        }
+        if (formData.assignedBoothId) {
+          updateData.assignedBoothId = formData.assignedBoothId;
+        }
+        if (formData.password) {
+          updateData.password = formData.password;
+        }
 
-      setIsAddOpen(false);
-      fetchModerators();
+        await api.put(`/rbac/users/${editingUser._id}`, updateData);
+        toast({
+          title: "Success",
+          description: "User updated successfully",
+        });
+      } else {
+        const createData: any = {
+          name: formData.name,
+          email: formData.email || undefined,
+          phone: formData.phone || undefined,
+          password: formData.password,
+          role: formData.role,
+          status: formData.status,
+        };
 
-      toast({
-        title: 'Moderator Added',
-        description: `${newModerator.name} has been successfully added as an ACI moderator.`,
-      });
+        // Don't set assignedAC for L1 (ACIM) users
+        if (formData.role !== "L1") {
+          if (formData.assignedAC) {
+            createData.assignedAC = parseInt(formData.assignedAC);
+          }
+          if (formData.aci_name) {
+            createData.aci_name = formData.aci_name;
+          }
+        }
+        if (formData.assignedBoothId) {
+          createData.assignedBoothId = formData.assignedBoothId;
+        }
+
+        await api.post("/rbac/users", createData);
+        toast({
+          title: "Success",
+          description: "User created successfully",
+        });
+      }
+
+      setIsDialogOpen(false);
+      resetForm();
+      fetchUsers();
     } catch (error: any) {
-      console.error('Error adding moderator:', error);
+      console.error("Error saving user:", error);
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to add moderator',
-        variant: 'destructive',
+        title: "Error",
+        description: error.message || error.toString() || "Failed to save user",
+        variant: "destructive",
       });
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
-  // Handle editing a moderator
-  const handleEditClick = (moderator: Moderator) => {
-    setSelectedModerator(moderator);
-    setEditModerator({
-      _id: moderator._id,
-      name: moderator.name,
-      email: moderator.email || '',
-      phone: moderator.phone || '',
-      assignedAC: moderator.assignedAC?.toString() || '',
-      status: moderator.status || 'Active',
+  const handleEdit = (user: User) => {
+    setIsEditMode(true);
+    setEditingUser(user);
+    const normalizedRole = user.role === "Booth Agent" ? "BoothAgent" : user.role;
+    setFormData({
+      name: user.name,
+      email: user.email || "",
+      phone: user.phone || "",
+      password: "",
+      role: normalizedRole,
+      assignedAC: user.assignedAC?.toString() || "",
+      aci_name: user.aci_name || "",
+      assignedBoothId: user.assignedBoothId?._id || user.booth_id || "",
+      status: user.status || "Active",
     });
-    setIsEditOpen(true);
+    setIsDialogOpen(true);
   };
 
-  const handleUpdateModerator = async () => {
-    if (!editModerator.name || !editModerator.assignedAC) {
-      toast({
-        title: 'Validation Error',
-        description: 'Please fill in all required fields.',
-        variant: 'destructive',
-      });
+  const handleDelete = async (userId: string) => {
+    if (!confirm("Are you sure you want to delete this user?")) {
       return;
     }
 
     try {
-      setIsSubmitting(true);
-      await api.put(`/rbac/users/${editModerator._id}`, {
-        name: editModerator.name,
-        email: editModerator.email || undefined,
-        phone: editModerator.phone || undefined,
-        assignedAC: parseInt(editModerator.assignedAC),
-        status: editModerator.status,
-      });
-
-      setIsEditOpen(false);
-      setSelectedModerator(null);
-      fetchModerators();
-
+      await api.delete(`/rbac/users/${userId}`);
       toast({
-        title: 'Moderator Updated',
-        description: `${editModerator.name}'s information has been successfully updated.`,
+        title: "Success",
+        description: "User deleted successfully",
       });
+      fetchUsers();
     } catch (error: any) {
-      console.error('Error updating moderator:', error);
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to update moderator',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Handle deleting a moderator
-  const handleDeleteModerator = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete ${name}?`)) {
-      return;
-    }
-
-    try {
-      await api.delete(`/rbac/users/${id}`);
-      fetchModerators();
-      toast({
-        title: 'Moderator Deleted',
-        description: `${name} has been successfully removed from the system.`,
-      });
-    } catch (error: any) {
-      console.error('Error deleting moderator:', error);
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to delete moderator',
-        variant: 'destructive',
+        title: "Error",
+        description: error.message || "Failed to delete user",
+        variant: "destructive",
       });
     }
   };
 
-  // Handle viewing moderator details
-  const handleViewClick = (moderator: Moderator) => {
-    setViewModerator(moderator);
+  const resetForm = () => {
+    const defaultRole = activeTab === "L1" ? "L1" :
+                       activeTab === "L2" ? "L2" :
+                       "BoothAgent";
+
+    setFormData({
+      name: "",
+      email: "",
+      phone: "",
+      password: "",
+      role: defaultRole,
+      assignedAC: "",
+      aci_name: "",
+      assignedBoothId: "",
+      status: "Active",
+    });
+    setIsEditMode(false);
+    setEditingUser(null);
   };
 
-  if (isLoading) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="ml-2 text-muted-foreground">Loading moderators...</span>
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch =
+      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.phone?.includes(searchTerm);
+
+    const roleMap: { [key: string]: string } = {
+      "L1": "L1",
+      "L2": "L2",
+      "BoothAgent": "BoothAgent"
+    };
+    const matchesRole = !activeTab || !roleMap[activeTab] || user.role === roleMap[activeTab] ||
+      (roleMap[activeTab] === "BoothAgent" && (user.role === "Booth Agent" || user.role === "BoothAgent"));
+
+    return matchesSearch && matchesRole;
+  });
+
+  const getRoleBadge = (role: string) => {
+    const roleConfig: { [key: string]: { label: string; variant: any } } = {
+      L1: { label: "ACIM", variant: "default" },
+      L2: { label: "ACI", variant: "secondary" },
+      BoothAgent: { label: "Booth Agent", variant: "outline" },
+      "Booth Agent": { label: "Booth Agent", variant: "outline" },
+    };
+
+    const config = roleConfig[role] || { label: role, variant: "outline" };
+    return <Badge variant={config.variant}>{config.label}</Badge>;
+  };
+
+  const renderUsersTable = () => {
+    const showAssignedAC = activeTab === "L2" || activeTab === "BoothAgent";
+    const showBoothNumber = activeTab === "BoothAgent";
+
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center p-8">
+          <div className="text-muted-foreground">Loading users...</div>
         </div>
-      </DashboardLayout>
+      );
+    }
+
+    if (filteredUsers.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center p-8 text-center">
+          <Users className="h-12 w-12 text-muted-foreground mb-4" />
+          <p className="text-muted-foreground">No users found</p>
+        </div>
+      );
+    }
+
+    return (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Contact</TableHead>
+            <TableHead>Role</TableHead>
+            {showAssignedAC && <TableHead>Assigned AC</TableHead>}
+            {showBoothNumber && <TableHead>Booth Number</TableHead>}
+            <TableHead>Status</TableHead>
+            <TableHead>Created</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filteredUsers.map((user) => (
+            <TableRow key={user._id}>
+              <TableCell className="font-medium">{user.name}</TableCell>
+              <TableCell>
+                <div className="space-y-1">
+                  {user.email && (
+                    <div className="text-sm">{user.email}</div>
+                  )}
+                  {user.phone && (
+                    <div className="text-sm text-muted-foreground">
+                      {user.phone}
+                    </div>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>{getRoleBadge(user.role)}</TableCell>
+              {showAssignedAC && (
+                <TableCell>
+                  {user.assignedAC ? (
+                    <div>
+                      <div className="font-medium">AC {user.assignedAC}</div>
+                      {user.aci_name && (
+                        <div className="text-sm text-muted-foreground">
+                          {user.aci_name}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+              )}
+              {showBoothNumber && (
+                <TableCell>
+                  {user.assignedBoothId ? (
+                    <div>
+                      <div className="font-medium">{user.assignedBoothId.boothCode || user.assignedBoothId.booth_id || user.assignedBoothId.boothName}</div>
+                      {user.assignedBoothId.boothName && (user.assignedBoothId.boothCode || user.assignedBoothId.booth_id) && (
+                        <div className="text-sm text-muted-foreground">
+                          {user.assignedBoothId.boothName}
+                        </div>
+                      )}
+                    </div>
+                  ) : user.booth_id ? (
+                    <div>
+                      <div className="font-medium">{user.booth_id}</div>
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+              )}
+              <TableCell>
+                <Badge
+                  variant={
+                    user.status === "Active"
+                      ? "default"
+                      : user.status === "Inactive"
+                      ? "destructive"
+                      : "secondary"
+                  }
+                >
+                  {user.status || "Active"}
+                </Badge>
+              </TableCell>
+              <TableCell>
+                {new Date(user.createdAt).toLocaleDateString()}
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleEdit(user)}
+                  >
+                    <Edit2 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDelete(user._id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     );
-  }
+  };
 
   return (
     <DashboardLayout>
-      <div className="space-y-8">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-4xl font-bold mb-2">Moderator Management</h1>
-            <p className="text-muted-foreground">
-              Manage Layer 2 (ACI) Moderators across all constituencies ({moderators.length} moderators)
-            </p>
+      <div className="space-y-6 p-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
+          <p className="text-muted-foreground">
+            Manage ACIM, ACI, and Booth Agent users
+          </p>
+        </div>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) resetForm();
+        }}>
+          <DialogTrigger asChild>
+            <Button>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Add User
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {isEditMode ? "Edit User" : "Create New User"}
+              </DialogTitle>
+              <DialogDescription>
+                {isEditMode
+                  ? "Update user information"
+                  : "Add a new ACIM, ACI, or Booth Agent user"}
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSubmit}>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name *</Label>
+                    <Input
+                      id="name"
+                      value={formData.name}
+                      onChange={(e) =>
+                        setFormData({ ...formData, name: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="role">Role *</Label>
+                    <Select
+                      value={formData.role}
+                      onValueChange={(value) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          role: value,
+                          assignedAC: (value === "L2" || value === "BoothAgent") ? prev.assignedAC : "",
+                          aci_name: (value === "L2" || value === "BoothAgent") ? prev.aci_name : "",
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* L1 (ACIM) can create L1, L2, and BoothAgent - NOT L0 */}
+                        <SelectItem value="L1">ACIM</SelectItem>
+                        <SelectItem value="L2">ACI</SelectItem>
+                        <SelectItem value="BoothAgent">Booth Agent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) =>
+                        setFormData({ ...formData, email: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone</Label>
+                    <Input
+                      id="phone"
+                      value={formData.phone}
+                      onChange={(e) =>
+                        setFormData({ ...formData, phone: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+
+                {/* AC Assignment - Only for L2 (ACI) and BoothAgent, NOT for L1 (ACIM) */}
+                {(formData.role === "L2" || formData.role === "BoothAgent") && (
+                  <div className="space-y-2">
+                    <Label htmlFor="assignedAC">Assigned AC {formData.role === "L2" ? "*" : ""}</Label>
+                    <Select
+                      value={formData.assignedAC}
+                      onValueChange={(value) => {
+                        const selected = CONSTITUENCIES.find(
+                          (ac) => ac.number.toString() === value
+                        );
+                        setFormData((prev) => ({
+                          ...prev,
+                          assignedAC: value,
+                          aci_name: selected?.name || "",
+                        }));
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select constituency" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CONSTITUENCIES.map((ac) => (
+                          <SelectItem key={ac.number} value={ac.number.toString()}>
+                            {ac.number} - {ac.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {/* Booth Assignment - Only for BoothAgent */}
+                {formData.role === "BoothAgent" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="assignedBoothId">Assigned Booth</Label>
+                    <select
+                      id="assignedBoothId"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formData.assignedBoothId || ""}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          assignedBoothId: e.target.value || undefined,
+                        })
+                      }
+                    >
+                      <option value="">Select Booth (Optional)</option>
+                      {booths.map((booth) => (
+                          <option key={booth._id} value={booth._id}>
+                            {booth.boothName} ({booth.boothCode})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Status Selector */}
+                <div className="space-y-2">
+                  <Label htmlFor="status">Status</Label>
+                  <select
+                    id="status"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={formData.status}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        status: e.target.value as "Active" | "Inactive" | "Pending",
+                      })
+                    }
+                    required
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                    <option value="Pending">Pending</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="password">
+                    Password {isEditMode ? "(leave blank to keep current)" : "*"}
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) =>
+                      setFormData({ ...formData, password: e.target.value })
+                    }
+                    required={!isEditMode}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsDialogOpen(false);
+                    resetForm();
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit">
+                  {isEditMode ? "Update User" : "Create User"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+        <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Users List</CardTitle>
+            <div className="flex gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search users..."
+                  className="pl-8 w-[300px]"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[150px]">
+                  <SelectValue placeholder="All Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="Active">Active</SelectItem>
+                  <SelectItem value="Inactive">Inactive</SelectItem>
+                  <SelectItem value="Pending">Pending</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <UserPlus className="mr-2 h-4 w-4" />
-                Add New Moderator
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add New Moderator (ACI)</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Full Name *</Label>
-                  <Input
-                    id="name"
-                    placeholder="Enter moderator name"
-                    value={newModerator.name}
-                    onChange={(e) => setNewModerator({...newModerator, name: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="Enter email address"
-                    value={newModerator.email}
-                    onChange={(e) => setNewModerator({...newModerator, email: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone</Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    placeholder="Enter phone number"
-                    value={newModerator.phone}
-                    onChange={(e) => setNewModerator({...newModerator, phone: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ac">Assign to Assembly Constituency *</Label>
-                  <Select value={newModerator.assignedAC} onValueChange={(value) => setNewModerator({...newModerator, assignedAC: value})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select AC" />
+        </CardHeader>
+        <CardContent>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="L1">ACIM</TabsTrigger>
+              <TabsTrigger value="L2">ACI</TabsTrigger>
+              <TabsTrigger value="BoothAgent">Booth Agents</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="L1" className="mt-4">
+              {renderUsersTable()}
+            </TabsContent>
+
+            <TabsContent value="L2" className="mt-4">
+              {/* Constituency Filter for ACI users */}
+              <div className="flex items-center gap-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-medium whitespace-nowrap">Filter by Constituency:</Label>
+                  <Select
+                    value={acFilter}
+                    onValueChange={(value) => {
+                      setAcFilter(value);
+                    }}
+                  >
+                    <SelectTrigger className="w-[280px]">
+                      <SelectValue placeholder="All Constituencies" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="all">All Constituencies</SelectItem>
                       {CONSTITUENCIES.map((ac) => (
-                        <SelectItem key={ac.number} value={String(ac.number)}>
-                          {ac.number} - {ac.name}
+                        <SelectItem key={ac.number} value={ac.number.toString()}>
+                          AC {ac.number} - {ac.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password *</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="Enter password"
-                    value={newModerator.password}
-                    onChange={(e) => setNewModerator({...newModerator, password: e.target.value})}
-                  />
-                </div>
-                <Button className="w-full" onClick={handleAddModerator} disabled={isSubmitting}>
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    'Create Moderator'
-                  )}
-                </Button>
               </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+              {renderUsersTable()}
+            </TabsContent>
 
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-muted">
-                <tr>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Name</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Email / Phone</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Assigned AC</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Status</th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {moderators.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                      No moderators found. Add a new moderator to get started.
-                    </td>
-                  </tr>
-                ) : (
-                  moderators.map((moderator) => (
-                    <tr key={moderator._id} className="hover:bg-muted/50">
-                      <td className="px-4 py-3 text-sm font-medium">{moderator.name}</td>
-                      <td className="px-4 py-3 text-sm">{moderator.email || moderator.phone || 'N/A'}</td>
-                      <td className="px-4 py-3 text-sm">{getACName(moderator.assignedAC)}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          moderator.status === 'Active' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
-                        }`}>
-                          {moderator.status || 'Active'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex space-x-2">
-                          <Button variant="ghost" size="sm" onClick={() => handleViewClick(moderator)}>
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleEditClick(moderator)}>
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteModerator(moderator._id, moderator.name)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      </div>
-
-      {/* View Moderator Dialog */}
-      <Dialog open={!!viewModerator} onOpenChange={(open) => !open && setViewModerator(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Moderator Details</DialogTitle>
-          </DialogHeader>
-          {viewModerator && (
-            <div className="space-y-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Name</Label>
-                  <p className="font-medium">{viewModerator.name}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Email</Label>
-                  <p className="font-medium">{viewModerator.email || 'N/A'}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Phone</Label>
-                  <p className="font-medium">{viewModerator.phone || 'N/A'}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Assigned AC</Label>
-                  <p className="font-medium">{getACName(viewModerator.assignedAC)}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Status</Label>
-                  <p className="font-medium">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      viewModerator.status === 'Active' ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
-                    }`}>
-                      {viewModerator.status || 'Active'}
-                    </span>
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Created At</Label>
-                  <p className="font-medium">
-                    {viewModerator.createdAt ? new Date(viewModerator.createdAt).toLocaleDateString() : 'N/A'}
-                  </p>
+            <TabsContent value="BoothAgent" className="mt-4">
+              {/* Constituency Filter for Booth Agents */}
+              <div className="flex items-center gap-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-medium whitespace-nowrap">Filter by Constituency:</Label>
+                  <Select
+                    value={acFilter}
+                    onValueChange={(value) => {
+                      setAcFilter(value);
+                    }}
+                  >
+                    <SelectTrigger className="w-[280px]">
+                      <SelectValue placeholder="All Constituencies" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Constituencies</SelectItem>
+                      {CONSTITUENCIES.map((ac) => (
+                        <SelectItem key={ac.number} value={ac.number.toString()}>
+                          AC {ac.number} - {ac.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Moderator Dialog */}
-      <Dialog open={isEditOpen} onOpenChange={(open) => {
-        setIsEditOpen(open);
-        if (!open) setSelectedModerator(null);
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Moderator</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">Full Name *</Label>
-              <Input
-                id="edit-name"
-                placeholder="Enter moderator name"
-                value={editModerator.name}
-                onChange={(e) => setEditModerator({...editModerator, name: e.target.value})}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-email">Email</Label>
-              <Input
-                id="edit-email"
-                type="email"
-                placeholder="Enter email address"
-                value={editModerator.email}
-                onChange={(e) => setEditModerator({...editModerator, email: e.target.value})}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-phone">Phone</Label>
-              <Input
-                id="edit-phone"
-                type="tel"
-                placeholder="Enter phone number"
-                value={editModerator.phone}
-                onChange={(e) => setEditModerator({...editModerator, phone: e.target.value})}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-ac">Assign to Assembly Constituency *</Label>
-              <Select value={editModerator.assignedAC} onValueChange={(value) => setEditModerator({...editModerator, assignedAC: value})}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select AC" />
-                </SelectTrigger>
-                <SelectContent>
-                  {CONSTITUENCIES.map((ac) => (
-                    <SelectItem key={ac.number} value={String(ac.number)}>
-                      {ac.number} - {ac.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-status">Status</Label>
-              <Select value={editModerator.status} onValueChange={(value) => setEditModerator({...editModerator, status: value})}>
-                <SelectTrigger id="edit-status">
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Active">Active</SelectItem>
-                  <SelectItem value="Inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button className="w-full" onClick={handleUpdateModerator} disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Updating...
-                </>
-              ) : (
-                'Update Moderator'
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+              {renderUsersTable()}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+    </div>
     </DashboardLayout>
   );
 };
+
+export default ModeratorManagement;

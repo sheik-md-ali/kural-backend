@@ -156,7 +156,8 @@ export const canAssignAgents = canManageBoothAgents;
 
 /**
  * Middleware to validate AC (Assembly Constituency) access
- * L1 and L2 users can only access data from their assigned AC
+ * L0 and L1 have full access to all ACs
+ * L2 users can only access data from their assigned AC
  */
 export const validateACAccess = (req, res, next) => {
   if (!req.user) {
@@ -166,13 +167,13 @@ export const validateACAccess = (req, res, next) => {
     });
   }
 
-  // L0 (Super Admin) has access to all ACs
-  if (req.user.role === "L0") {
+  // L0 (Super Admin) and L1 (ACIM) have access to all ACs
+  if (req.user.role === "L0" || req.user.role === "L1") {
     return next();
   }
 
-  // L1 and L2 must have assignedAC
-  if (req.user.role === "L1" || req.user.role === "L2") {
+  // L2 must have assignedAC and can only access that AC
+  if (req.user.role === "L2") {
     const assignedAC = normalizeUserAssignedAC(req.user);
 
     if (assignedAC === null) {
@@ -199,13 +200,13 @@ export const applyACFilter = (user, query = {}) => {
     return query;
   }
 
-  // L0 sees everything
-  if (user.role === "L0") {
+  // L0 and L1 see everything (L1 = ACIM has access to all ACs)
+  if (user.role === "L0" || user.role === "L1") {
     return query;
   }
 
-  // L1 and L2 see only their AC
-  if (user.role === "L1" || user.role === "L2") {
+  // L2 sees only their assigned AC
+  if (user.role === "L2") {
     const assignedAC = normalizeUserAssignedAC(user);
     if (assignedAC !== null) {
       query.ac_id = assignedAC;
@@ -223,8 +224,10 @@ export const applyACFilter = (user, query = {}) => {
  */
 export const canAccessAC = (user, acId) => {
   if (!user) return false;
-  if (user.role === "L0") return true;
-  if (user.role === "L1" || user.role === "L2") {
+  // L0 and L1 can access ALL ACs (L1 = ACIM has full AC access)
+  if (user.role === "L0" || user.role === "L1") return true;
+  // L2 can only access their assigned AC
+  if (user.role === "L2") {
     const assignedAC = normalizeUserAssignedAC(user);
     const requestedAC = toNumericAcId(acId);
     if (assignedAC === null || requestedAC === null) {

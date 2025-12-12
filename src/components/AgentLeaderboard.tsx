@@ -63,15 +63,15 @@ export const AgentLeaderboard = ({ acNumber }: AgentLeaderboardProps) => {
 
         const data = await api.get(`/rbac/booth-agents?${params.toString()}`);
 
-        // Transform the data and sort by survey count (mock survey count based on status)
+        // Transform the data - use actual data fields when available
         const agentList: Agent[] = (data.agents || data || [])
           .filter((a: any) => a.isActive !== false)
           .map((agent: any, idx: number) => ({
             id: agent._id || agent.id || idx.toString(),
             name: agent.name || 'Unknown Agent',
-            surveys: agent.surveyCount || Math.floor(Math.random() * 100) + 50, // Use real count when available
-            responseTime: agent.avgResponseTime || Math.floor(Math.random() * 10) + 10,
-            qualityScore: agent.qualityScore || Math.floor(Math.random() * 15) + 80,
+            surveys: agent.surveyCount || 0, // Show 0 if no survey data
+            responseTime: agent.avgResponseTime || 0,
+            qualityScore: agent.qualityScore || 0,
             rank: 0,
             trend: '+0%',
           }))
@@ -80,7 +80,6 @@ export const AgentLeaderboard = ({ acNumber }: AgentLeaderboardProps) => {
           .map((agent: Agent, idx: number) => ({
             ...agent,
             rank: idx + 1,
-            trend: `${Math.random() > 0.3 ? '+' : '-'}${Math.floor(Math.random() * 10)}%`,
           }));
 
         setAgents(agentList);

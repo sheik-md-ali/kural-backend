@@ -1,15 +1,46 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Upload, Download, FileSpreadsheet } from 'lucide-react';
-import { useState, useRef } from 'react';
+import { Upload, Download, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
 import { useToast } from '@/components/ui/use-toast';
+import { api } from '@/lib/api';
+
+interface ExportStats {
+  totalVoters: number;
+  totalFamilies: number;
+  totalSurveys: number;
+}
 
 export const VoterData = () => {
   const { toast } = useToast();
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+  const [exportStats, setExportStats] = useState<ExportStats>({ totalVoters: 0, totalFamilies: 0, totalSurveys: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetchExportStats();
+  }, []);
+
+  const fetchExportStats = async () => {
+    try {
+      setIsLoadingStats(true);
+      const response = await api.get('/rbac/dashboard/ac-overview');
+      if (response.success && response.totals) {
+        setExportStats({
+          totalVoters: response.totals.totalVoters || 0,
+          totalFamilies: response.totals.totalFamilies || 0,
+          totalSurveys: response.totals.totalSurveyedMembers || 0,
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching export stats:', error);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
 
   const handleImportClick = () => {
     if (fileInputRef.current) {
@@ -186,15 +217,21 @@ export const VoterData = () => {
               <div className="space-y-3 pt-4">
                 <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
                   <span className="text-sm font-medium">All Constituencies</span>
-                  <span className="text-sm text-muted-foreground">26,247 voters</span>
+                  <span className="text-sm text-muted-foreground">
+                    {isLoadingStats ? <Loader2 className="h-4 w-4 animate-spin inline" /> : `${exportStats.totalVoters.toLocaleString()} voters`}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
                   <span className="text-sm font-medium">Total Families</span>
-                  <span className="text-sm text-muted-foreground">7,182 families</span>
+                  <span className="text-sm text-muted-foreground">
+                    {isLoadingStats ? <Loader2 className="h-4 w-4 animate-spin inline" /> : `${exportStats.totalFamilies.toLocaleString()} families`}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
                   <span className="text-sm font-medium">Total Surveys</span>
-                  <span className="text-sm text-muted-foreground">3,289 completed</span>
+                  <span className="text-sm text-muted-foreground">
+                    {isLoadingStats ? <Loader2 className="h-4 w-4 animate-spin inline" /> : `${exportStats.totalSurveys.toLocaleString()} completed`}
+                  </span>
                 </div>
               </div>
 

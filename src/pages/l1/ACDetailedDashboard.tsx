@@ -5,10 +5,10 @@ import { StatCard } from '@/components/StatCard';
 import { ActionButton } from '@/components/ActionButton';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, Home, FileCheck, MapPin, Activity, Clock, TrendingUp, LineChart, Loader2 } from 'lucide-react';
+import { Users, Home, FileCheck, MapPin, Activity, Clock, TrendingUp, LineChart, Loader2, UserCheck, Phone } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart as RechartsLineChart, Line, AreaChart, Area } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart as RechartsLineChart, Line, AreaChart, Area } from 'recharts';
 import { BoothDetailDrawer } from '@/components/BoothDetailDrawer';
 import { AgentLeaderboard } from '@/components/AgentLeaderboard';
 import { ExportButton } from '@/components/ExportButton';
@@ -39,6 +39,17 @@ interface BoothData {
   voters: number;
 }
 
+interface BoothAgent {
+  id: string;
+  name: string;
+  phone: string;
+  boothId: string;
+  boothName: string;
+  boothNo: string;
+  isActive: boolean;
+  createdAt?: string;
+}
+
 export const ACDetailedDashboard = () => {
   const { acNumber } = useParams<{ acNumber: string }>();
   const navigate = useNavigate();
@@ -46,6 +57,8 @@ export const ACDetailedDashboard = () => {
   const [acStats, setAcStats] = useState<ACStats | null>(null);
   const [selectedBooth, setSelectedBooth] = useState<BoothData | null>(null);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
+  const [boothAgents, setBoothAgents] = useState<BoothAgent[]>([]);
+  const [isLoadingAgents, setIsLoadingAgents] = useState(false);
 
   useEffect(() => {
     const fetchACStats = async () => {
@@ -56,17 +69,52 @@ export const ACDetailedDashboard = () => {
         const data = await api.get(`/dashboard/stats/${acNumber}`);
         setAcStats(data);
 
-        // Generate recent activities from survey data
+        // Generate recent activities from booth agent activities and surveys
         try {
-          const surveyData = await api.get(`/survey-responses?ac=${acNumber}&limit=5`);
-          if (surveyData.responses && surveyData.responses.length > 0) {
-            const activities = surveyData.responses.map((response: any, idx: number) => ({
-              id: idx + 1,
-              text: `Survey completed for ${response.respondent_name || 'Voter'}`,
-              time: new Date(response.survey_date).toLocaleString(),
-              type: 'survey',
-            }));
-            setRecentActivities(activities);
+          const activitiesList: any[] = [];
+
+          // Fetch booth agent activities
+          try {
+            const agentActivityData = await api.get(`/dashboard/booth-agent-activities?acId=${acNumber}&limit=5`);
+            if (agentActivityData.activities && agentActivityData.activities.length > 0) {
+              agentActivityData.activities.forEach((activity: any, idx: number) => {
+                activitiesList.push({
+                  id: `agent-${idx}`,
+                  text: `${activity.userName || 'Agent'} ${activity.status === 'active' ? 'logged in' : 'logged out'} - ${activity.boothno || activity.booth_id || 'Booth'}`,
+                  time: activity.loginTime ? new Date(activity.loginTime).toLocaleString() : 'N/A',
+                  type: activity.status === 'active' ? 'booth' : 'info',
+                  timestamp: new Date(activity.loginTime || activity.createdAt).getTime(),
+                });
+              });
+            }
+          } catch (e) {
+            console.log('No booth agent activities available');
+          }
+
+          // Fetch survey responses
+          try {
+            const surveyData = await api.get(`/survey-responses?ac=${acNumber}&limit=5`);
+            if (surveyData.responses && surveyData.responses.length > 0) {
+              surveyData.responses.forEach((response: any, idx: number) => {
+                activitiesList.push({
+                  id: `survey-${idx}`,
+                  text: `Survey completed for ${response.respondent_name || 'Voter'}`,
+                  time: new Date(response.survey_date).toLocaleString(),
+                  type: 'survey',
+                  timestamp: new Date(response.survey_date).getTime(),
+                });
+              });
+            }
+          } catch (e) {
+            console.log('No survey responses available');
+          }
+
+          // Sort by timestamp (most recent first) and take top 10
+          activitiesList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+          const topActivities = activitiesList.slice(0, 10);
+
+          if (topActivities.length > 0) {
+            setRecentActivities(topActivities);
           } else {
             setRecentActivities([
               { id: 1, text: 'No recent activity', time: 'N/A', type: 'info' }
@@ -98,6 +146,39 @@ export const ACDetailedDashboard = () => {
     fetchACStats();
   }, [acNumber]);
 
+  // Fetch booth agents for this AC
+  useEffect(() => {
+    const fetchBoothAgents = async () => {
+      if (!acNumber) return;
+
+      try {
+        setIsLoadingAgents(true);
+        const params = new URLSearchParams({ ac: acNumber });
+        const data = await api.get(`/rbac/booth-agents?${params.toString()}`);
+
+        const agents = (data.agents || data || []).map((agent: any) => ({
+          id: agent._id || agent.id,
+          name: agent.name || 'Unknown',
+          phone: agent.phone || 'N/A',
+          boothId: agent.boothId || agent.assignedBooth || 'N/A',
+          boothName: agent.boothName || agent.assignedBoothName || 'N/A',
+          boothNo: agent.boothNo || 'N/A',
+          isActive: agent.isActive !== false,
+          createdAt: agent.createdAt,
+        }));
+
+        setBoothAgents(agents);
+      } catch (error) {
+        console.error('Error fetching booth agents:', error);
+        setBoothAgents([]);
+      } finally {
+        setIsLoadingAgents(false);
+      }
+    };
+
+    fetchBoothAgents();
+  }, [acNumber]);
+
   // Get AC name from CONSTITUENCIES for display
   const getACDisplayName = () => {
     if (acStats?.acName) return acStats.acName;
@@ -116,13 +197,6 @@ export const ACDetailedDashboard = () => {
     completion: Math.round((booth.voters / (acStats.totalMembers || 1)) * 100),
     voters: booth.voters,
   })) || [];
-
-  // Agent performance data (using static percentages for now as we don't have agent performance API)
-  const agentPerformanceData = [
-    { name: 'High Performers', value: 45, color: 'hsl(var(--success))' },
-    { name: 'Medium Performers', value: 35, color: 'hsl(var(--warning))' },
-    { name: 'Low Performers', value: 20, color: 'hsl(var(--destructive))' },
-  ];
 
   // Generate time-series data from current stats
   const timeSeriesData = [
@@ -331,22 +405,43 @@ export const ACDetailedDashboard = () => {
 
           {/* Booths Tab with Drill-Down */}
           <TabsContent value="booths" className="space-y-6">
+            {/* Booth Summary Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card className="p-4">
+                <p className="text-sm text-muted-foreground">Total Booths</p>
+                <p className="text-3xl font-bold text-primary">{acStats?.totalBooths || 0}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-sm text-muted-foreground">Total Voters</p>
+                <p className="text-3xl font-bold text-success">{(acStats?.totalMembers || 0).toLocaleString()}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-sm text-muted-foreground">Avg Voters/Booth</p>
+                <p className="text-3xl font-bold text-warning">
+                  {acStats?.totalBooths && acStats.totalBooths > 0
+                    ? Math.round((acStats.totalMembers || 0) / acStats.totalBooths).toLocaleString()
+                    : '0'}
+                </p>
+              </Card>
+            </div>
+
+            {/* Booth Performance Chart - showing top 20 for better visualization */}
             <Card className="p-6">
-              <h3 className="text-lg font-semibold mb-4">Booth Performance Breakdown</h3>
+              <h3 className="text-lg font-semibold mb-4">Top Booths by Voter Count</h3>
               <p className="text-sm text-muted-foreground mb-4">
                 {boothPerformanceData.length > 0
-                  ? 'Click on any bar to view detailed booth information'
+                  ? `Showing top ${Math.min(20, boothPerformanceData.length)} booths. Click on any bar to view details.`
                   : 'No booth data available for this AC'}
               </p>
               {boothPerformanceData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={400}>
-                  <BarChart data={boothPerformanceData} onClick={(data) => {
+                  <BarChart data={boothPerformanceData.slice(0, 20)} onClick={(data) => {
                     if (data && data.activePayload) {
                       setSelectedBooth(data.activePayload[0].payload);
                     }
                   }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="booth" />
+                    <XAxis dataKey="booth" angle={-45} textAnchor="end" height={100} interval={0} fontSize={10} />
                     <YAxis />
                     <Tooltip cursor={{ fill: 'hsl(var(--primary) / 0.1)' }} />
                     <Legend />
@@ -360,25 +455,34 @@ export const ACDetailedDashboard = () => {
               )}
             </Card>
 
-            {/* Booth Stats Table */}
+            {/* Full Booth Stats Table with Scrolling */}
             {acStats?.boothStats && acStats.boothStats.length > 0 && (
               <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4">Booth Details</h3>
-                <div className="overflow-x-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">All Booths ({acStats.boothStats.length})</h3>
+                  <p className="text-sm text-muted-foreground">Scroll to see all booths</p>
+                </div>
+                <div className="overflow-auto max-h-[500px] border rounded-lg">
                   <table className="w-full">
-                    <thead className="bg-muted">
+                    <thead className="bg-muted sticky top-0">
                       <tr>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">#</th>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Booth Name</th>
                         <th className="px-4 py-3 text-left text-sm font-semibold">Booth No</th>
                         <th className="px-4 py-3 text-right text-sm font-semibold">Voters</th>
+                        <th className="px-4 py-3 text-right text-sm font-semibold">% of Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {acStats.boothStats.map((booth, idx) => (
                         <tr key={idx} className="hover:bg-muted/50">
-                          <td className="px-4 py-3 text-sm">{booth.boothName || 'Unknown'}</td>
+                          <td className="px-4 py-3 text-sm text-muted-foreground">{idx + 1}</td>
+                          <td className="px-4 py-3 text-sm font-medium">{booth.boothName || 'Unknown'}</td>
                           <td className="px-4 py-3 text-sm">{booth.boothNo || 'N/A'}</td>
-                          <td className="px-4 py-3 text-sm text-right">{booth.voters.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold">{booth.voters.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm text-right text-muted-foreground">
+                            {acStats.totalMembers > 0 ? ((booth.voters / acStats.totalMembers) * 100).toFixed(1) : 0}%
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -390,29 +494,85 @@ export const ACDetailedDashboard = () => {
 
           {/* Agents Tab with Leaderboard */}
           <TabsContent value="agents" className="space-y-6">
+            {/* Agent Summary Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card className="p-4">
+                <p className="text-sm text-muted-foreground">Total Agents</p>
+                <p className="text-3xl font-bold text-primary">{boothAgents.length}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-sm text-muted-foreground">Active Agents</p>
+                <p className="text-3xl font-bold text-success">
+                  {boothAgents.filter(a => a.isActive).length}
+                </p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-sm text-muted-foreground">Inactive Agents</p>
+                <p className="text-3xl font-bold text-muted-foreground">
+                  {boothAgents.filter(a => !a.isActive).length}
+                </p>
+              </Card>
+            </div>
+
+            {/* All Booth Agents Table */}
             <Card className="p-6">
-              <h3 className="text-lg font-semibold mb-4">Agent Performance Distribution</h3>
-              <div className="flex items-center justify-center">
-                <ResponsiveContainer width="100%" height={400}>
-                  <PieChart>
-                    <Pie
-                      data={agentPerformanceData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }) => `${name}: ${value}%`}
-                      outerRadius={120}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {agentPerformanceData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <UserCheck className="h-5 w-5" />
+                  All Booth Agents ({boothAgents.length})
+                </h3>
               </div>
+
+              {isLoadingAgents ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  <span className="ml-2 text-muted-foreground">Loading agents...</span>
+                </div>
+              ) : boothAgents.length > 0 ? (
+                <div className="overflow-auto max-h-[500px] border rounded-lg">
+                  <table className="w-full">
+                    <thead className="bg-muted sticky top-0">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">#</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Agent Name</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Phone</th>
+                        <th className="px-4 py-3 text-left text-sm font-semibold">Booth</th>
+                        <th className="px-4 py-3 text-center text-sm font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {boothAgents.map((agent, idx) => (
+                        <tr key={agent.id} className="hover:bg-muted/50">
+                          <td className="px-4 py-3 text-sm text-muted-foreground">{idx + 1}</td>
+                          <td className="px-4 py-3 text-sm font-medium">{agent.name}</td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className="flex items-center gap-1">
+                              <Phone className="h-3 w-3 text-muted-foreground" />
+                              {agent.phone}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {agent.boothName !== 'N/A' ? agent.boothName : agent.boothNo !== 'N/A' ? `Booth ${agent.boothNo}` : 'Not Assigned'}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                              agent.isActive
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                                : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400'
+                            }`}>
+                              {agent.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  No booth agents found for AC {acNumber}
+                </div>
+              )}
             </Card>
 
             {/* Agent Leaderboard */}

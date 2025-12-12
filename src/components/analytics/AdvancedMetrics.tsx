@@ -1,134 +1,142 @@
 import { Card } from '../ui/card';
 import { Progress } from '../ui/progress';
-import { Users, Zap, Home, UserCheck, Clock, Award, Loader2 } from 'lucide-react';
+import { Users, Zap, Home, UserCheck, Clock, Award, Loader2, MapPin, FileCheck } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { CONSTITUENCIES } from '@/constants/constituencies';
+
+interface ACPerformance {
+  acNumber: number;
+  acName: string | null;
+  voters: number;
+  surveyedMembers: number;
+  families: number;
+  booths: number;
+  completion: number;
+  agents: number;
+}
 
 interface MetricData {
   label: string;
   value: number;
   unit: string;
-  icon: any;
+  icon: React.ElementType;
   description: string;
   benchmark: number;
   color: string;
+  rawValue?: string;
 }
 
 export const AdvancedMetrics = () => {
   const [metrics, setMetrics] = useState<MetricData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [acStats, setACStats] = useState<{ withData: number; total: number }>({ withData: 0, total: CONSTITUENCIES.length });
 
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
         setIsLoading(true);
 
-        // Fetch aggregate data from multiple ACs
-        let totalMembers = 0;
+        // Use the batched ac-overview API for accurate data
+        const data = await api.get('/rbac/dashboard/ac-overview');
+
+        let totalVoters = 0;
         let totalSurveys = 0;
         let totalFamilies = 0;
         let totalBooths = 0;
-        let acCount = 0;
-
-        // Fetch data from multiple ACs
-        const statsPromises = CONSTITUENCIES.slice(0, 10).map(async (c) => {
-          try {
-            return await api.get(`/dashboard/stats/${c.number}`);
-          } catch {
-            return null;
-          }
-        });
-
-        const results = await Promise.all(statsPromises);
-        results.forEach(data => {
-          if (data) {
-            totalMembers += data.totalMembers || 0;
-            totalSurveys += data.surveysCompleted || 0;
-            totalFamilies += data.totalFamilies || 0;
-            totalBooths += data.totalBooths || 0;
-            acCount++;
-          }
-        });
-
-        // Fetch agent data
         let totalAgents = 0;
-        let activeAgents = 0;
-        try {
-          const agentData = await api.get('/rbac/booth-agents');
-          const agents = agentData.agents || agentData || [];
-          totalAgents = agents.length;
-          activeAgents = agents.filter((a: any) => a.isActive !== false).length;
-        } catch {
-          // Fallback
+        let acsWithData = 0;
+
+        if (data.success && data.acPerformance) {
+          data.acPerformance.forEach((ac: ACPerformance) => {
+            if (ac.voters > 0) {
+              acsWithData++;
+              totalVoters += ac.voters;
+              totalSurveys += ac.surveyedMembers;
+              totalFamilies += ac.families;
+              totalBooths += ac.booths;
+              totalAgents += ac.agents || 0;
+            }
+          });
         }
 
-        // Calculate metrics based on real data
-        const completionRate = totalMembers > 0 ? (totalSurveys / totalMembers) * 100 : 0;
-        const familyEngagement = totalFamilies > 0 ? (totalSurveys / totalFamilies) * 100 : 0;
-        const agentRetention = totalAgents > 0 ? (activeAgents / totalAgents) * 100 : 0;
-        const boothCoverage = acCount > 0 ? Math.min((totalBooths / (acCount * 100)) * 100, 100) : 0;
+        setACStats({ withData: acsWithData, total: CONSTITUENCIES.length });
+
+        // Calculate metrics based on real aggregated data
+        const surveyCompletionRate = totalVoters > 0 ? (totalSurveys / totalVoters) * 100 : 0;
+        const familyCoverage = totalFamilies > 0 ? Math.min((totalSurveys / totalFamilies) * 100, 100) : 0;
+        const avgVotersPerBooth = totalBooths > 0 ? Math.round(totalVoters / totalBooths) : 0;
+        const avgVotersPerAgent = totalAgents > 0 ? Math.round(totalVoters / totalAgents) : 0;
+        const avgSurveysPerAgent = totalAgents > 0 ? Math.round((totalSurveys / totalAgents) * 10) / 10 : 0;
+        const boothAgentRatio = totalBooths > 0 && totalAgents > 0 ? Math.round((totalAgents / totalBooths) * 100) / 100 : 0;
 
         const calculatedMetrics: MetricData[] = [
           {
-            label: 'Agent Efficiency Score',
-            value: totalAgents > 0 ? parseFloat(((totalSurveys / Math.max(totalAgents, 1)) / 30).toFixed(1)) : 0,
-            unit: '/day',
-            icon: Zap,
-            description: 'Average surveys completed per agent per day',
-            benchmark: 5,
-            color: 'text-yellow-500',
-          },
-          {
             label: 'Survey Completion Rate',
-            value: parseFloat(completionRate.toFixed(1)),
+            value: parseFloat(surveyCompletionRate.toFixed(2)),
             unit: '%',
             icon: Award,
-            description: 'Percentage of voters surveyed',
-            benchmark: 50,
+            description: `${totalSurveys.toLocaleString()} of ${totalVoters.toLocaleString()} voters surveyed`,
+            benchmark: 10,
             color: 'text-green-500',
+            rawValue: `${totalSurveys.toLocaleString()} surveys`,
           },
           {
-            label: 'Booth Coverage',
-            value: parseFloat(boothCoverage.toFixed(1)),
+            label: 'Family Coverage',
+            value: parseFloat(familyCoverage.toFixed(1)),
             unit: '%',
             icon: Home,
-            description: 'Booths with active data collection',
-            benchmark: 80,
+            description: `Surveys per family across ${totalFamilies.toLocaleString()} families`,
+            benchmark: 50,
             color: 'text-blue-500',
+            rawValue: `${totalFamilies.toLocaleString()} families`,
           },
           {
-            label: 'Family Engagement',
-            value: parseFloat(Math.min(familyEngagement, 100).toFixed(1)),
-            unit: '%',
-            icon: Users,
-            description: 'Families with at least one survey',
-            benchmark: 70,
+            label: 'Avg Voters per Booth',
+            value: avgVotersPerBooth,
+            unit: '',
+            icon: MapPin,
+            description: `Distribution across ${totalBooths.toLocaleString()} booths`,
+            benchmark: 150,
             color: 'text-purple-500',
+            rawValue: `${totalBooths} booths`,
+          },
+          {
+            label: 'Surveys per Agent',
+            value: avgSurveysPerAgent,
+            unit: '',
+            icon: UserCheck,
+            description: `Average productivity across ${totalAgents} agents`,
+            benchmark: 50,
+            color: 'text-cyan-500',
+            rawValue: `${totalAgents} agents`,
+          },
+          {
+            label: 'Voters per Agent',
+            value: avgVotersPerAgent,
+            unit: '',
+            icon: Users,
+            description: 'Workload distribution per agent',
+            benchmark: 1000,
+            color: 'text-yellow-500',
+            rawValue: `${totalVoters.toLocaleString()} voters`,
           },
           {
             label: 'Active ACs',
-            value: acCount,
-            unit: '',
+            value: acsWithData,
+            unit: `/${CONSTITUENCIES.length}`,
             icon: Clock,
-            description: 'Assembly Constituencies with data',
+            description: 'Assembly Constituencies with voter data',
             benchmark: CONSTITUENCIES.length,
-            color: 'text-cyan-500',
-          },
-          {
-            label: 'Agent Retention',
-            value: parseFloat(agentRetention.toFixed(1)),
-            unit: '%',
-            icon: UserCheck,
-            description: 'Active agents vs total assigned',
-            benchmark: 90,
             color: 'text-pink-500',
+            rawValue: `${acsWithData} active`,
           },
         ];
 
         setMetrics(calculatedMetrics);
       } catch (error) {
         console.error('Error fetching advanced metrics:', error);
+        setMetrics([]);
       } finally {
         setIsLoading(false);
       }
@@ -151,22 +159,39 @@ export const AdvancedMetrics = () => {
     );
   }
 
+  if (metrics.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold">Advanced Performance Metrics</h2>
+          <p className="text-muted-foreground mt-1">No data available</p>
+        </div>
+        <Card className="p-6">
+          <p className="text-center text-muted-foreground">
+            No metrics data available. Add voter data to see performance metrics.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">Advanced Performance Metrics</h2>
         <p className="text-muted-foreground mt-1">
-          Deep dive into efficiency and quality indicators
+          Deep dive into efficiency and quality indicators across {acStats.withData} ACs
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {metrics.map((metric, index) => {
           const Icon = metric.icon;
-          const isAboveBenchmark = metric.label === 'Response Time' 
-            ? metric.value < metric.benchmark 
-            : metric.value > metric.benchmark;
-          
+          const progressValue = metric.label === 'Active ACs'
+            ? (metric.value / metric.benchmark) * 100
+            : Math.min((metric.value / metric.benchmark) * 100, 100);
+          const isAboveBenchmark = metric.value >= metric.benchmark;
+
           return (
             <Card key={index} className="p-6">
               <div className="flex items-start justify-between mb-4">
@@ -175,7 +200,7 @@ export const AdvancedMetrics = () => {
                 </div>
                 <div className="text-right">
                   <p className="text-3xl font-bold">
-                    {metric.value}
+                    {metric.value.toLocaleString()}
                     <span className="text-lg text-muted-foreground ml-1">{metric.unit}</span>
                   </p>
                 </div>
@@ -186,19 +211,25 @@ export const AdvancedMetrics = () => {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">vs Benchmark</span>
+                  <span className="text-muted-foreground">vs Target</span>
                   <span className={isAboveBenchmark ? 'text-green-500' : 'text-yellow-500'}>
                     {metric.benchmark}{metric.unit}
                   </span>
                 </div>
-                <Progress 
-                  value={metric.label === 'Response Time' ? 100 - (metric.value / metric.benchmark * 100) : (metric.value / metric.benchmark * 100)} 
-                  className="h-2" 
+                <Progress
+                  value={progressValue}
+                  className="h-2"
                 />
                 <p className="text-xs text-muted-foreground">
-                  {isAboveBenchmark ? '✓ Above' : '△ Below'} benchmark
+                  {isAboveBenchmark ? '✓ Target met' : `△ ${Math.round(progressValue)}% of target`}
                 </p>
               </div>
+
+              {metric.rawValue && (
+                <p className="text-xs text-muted-foreground mt-3 pt-3 border-t">
+                  {metric.rawValue}
+                </p>
+              )}
             </Card>
           );
         })}
@@ -208,27 +239,27 @@ export const AdvancedMetrics = () => {
         <h3 className="font-semibold mb-4">Metric Definitions</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
           <div className="space-y-2">
-            <p className="font-medium">Agent Efficiency Score</p>
+            <p className="font-medium">Survey Completion Rate</p>
             <p className="text-muted-foreground">
-              Calculated as: (Total Surveys / Total Agents / Days Active) × Quality Factor
+              (Total Surveys / Total Voters) × 100. Measures overall progress toward complete voter coverage.
             </p>
           </div>
           <div className="space-y-2">
-            <p className="font-medium">Survey Quality Index</p>
+            <p className="font-medium">Family Coverage</p>
             <p className="text-muted-foreground">
-              Percentage of surveys with all mandatory fields completed and validated
+              (Surveys / Total Families) × 100. Shows engagement at the family level.
             </p>
           </div>
           <div className="space-y-2">
-            <p className="font-medium">Booth Coverage</p>
+            <p className="font-medium">Avg Voters per Booth</p>
             <p className="text-muted-foreground">
-              (Active Booths / Total Booths) × 100, where active = has assigned agent
+              Total Voters / Total Booths. Indicates voter distribution and booth load.
             </p>
           </div>
           <div className="space-y-2">
-            <p className="font-medium">Family Engagement</p>
+            <p className="font-medium">Surveys per Agent</p>
             <p className="text-muted-foreground">
-              (Families with surveys / Total families) × 100
+              Total Surveys / Total Agents. Measures average agent productivity.
             </p>
           </div>
         </div>

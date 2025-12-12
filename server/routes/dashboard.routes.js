@@ -112,16 +112,12 @@ router.get("/stats/:acId", async (req, res) => {
     // Get total members (voters) for this AC - use sharded collection
     const totalMembers = await countVoters(acId, {});
 
-    // Get unique families by grouping voters with same address and guardian
+    // Get unique families by counting distinct familyId values
     const familiesAggregation = await aggregateVoters(acId, [
       { $match: {} },
       {
         $group: {
-          _id: {
-            address: "$address",
-            guardian: "$guardian",
-            booth_id: "$booth_id",
-          },
+          _id: "$familyId",
         },
       },
       { $count: "total" },
@@ -140,6 +136,7 @@ router.get("/stats/:acId", async (req, res) => {
     const totalBooths = boothsAggregation.length > 0 ? boothsAggregation[0].total : 0;
 
     // Get booth-wise data - group by booth_id only to avoid duplicates
+    // Removed $limit to return ALL booths for the AC
     const boothStats = await aggregateVoters(acId, [
       { $match: {} },
       {
@@ -151,7 +148,6 @@ router.get("/stats/:acId", async (req, res) => {
         },
       },
       { $sort: { boothno: 1 } },
-      { $limit: 10 },
     ]);
 
     const responseData = {
@@ -231,11 +227,11 @@ router.get("/booth-agent-activities", async (req, res) => {
       });
       total = await countBoothAgentActivities(numericAcId, query);
     } else {
-      // L0 users can query all ACs
-      if (req.user.role !== 'L0') {
+      // L0 and L1 users can query all ACs, L2 must specify an AC
+      if (req.user.role !== 'L0' && req.user.role !== 'L1') {
         return res.status(403).json({
           success: false,
-          message: "Only L0 users can query all ACs"
+          message: "Please select an AC to view activities"
         });
       }
 

@@ -6,8 +6,20 @@ import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { CONSTITUENCIES } from '@/constants/constituencies';
 
+interface ACPerformance {
+  acNumber: number;
+  acName: string | null;
+  voters: number;
+  surveyedMembers: number;
+  families: number;
+  booths: number;
+  completion: number;
+  agents: number;
+}
+
 interface PredictionData {
   acNumber: number;
+  name: string;
   currentCompletion: number;
   projected7Days: number;
   projected14Days: number;
@@ -16,7 +28,10 @@ interface PredictionData {
   onTrack: boolean;
   riskLevel: 'low' | 'medium' | 'high';
   recommendation: string;
-  velocity: number; // surveys per day
+  velocity: number;
+  voters: number;
+  surveys: number;
+  agents: number;
 }
 
 export const PredictiveInsights = () => {
@@ -27,23 +42,38 @@ export const PredictiveInsights = () => {
     const fetchPredictions = async () => {
       try {
         setIsLoading(true);
-        const predictionData: PredictionData[] = [];
 
-        // Fetch data for first 6 ACs
-        const promises = CONSTITUENCIES.slice(0, 6).map(async (c) => {
-          try {
-            const data = await api.get(`/dashboard/stats/${c.number}`);
-            const totalVoters = data.totalMembers || 1;
-            const surveys = data.surveysCompleted || 0;
-            const currentCompletion = (surveys / totalVoters) * 100;
+        // Use the batched ac-overview API for accurate data
+        const data = await api.get('/rbac/dashboard/ac-overview');
 
-            // Calculate velocity based on surveys (assume 30-day period)
-            const velocity = surveys / 30;
+        if (!data.success || !data.acPerformance) {
+          setPredictions([]);
+          return;
+        }
 
-            // Project future completions
-            const projected7Days = Math.min(currentCompletion + (velocity * 7 / totalVoters * 100), 100);
-            const projected14Days = Math.min(currentCompletion + (velocity * 14 / totalVoters * 100), 100);
-            const projected30Days = Math.min(currentCompletion + (velocity * 30 / totalVoters * 100), 100);
+        const predictionData: PredictionData[] = data.acPerformance
+          .filter((ac: ACPerformance) => ac.voters > 0) // Only include ACs with data
+          .map((ac: ACPerformance) => {
+            const constituency = CONSTITUENCIES.find(c => c.number === ac.acNumber);
+            const name = ac.acName || constituency?.name || `AC ${ac.acNumber}`;
+
+            const totalVoters = ac.voters;
+            const surveys = ac.surveyedMembers;
+            const agents = ac.agents || 1;
+            const currentCompletion = ac.completion || 0;
+
+            // Calculate velocity: surveys per day per agent (assume 30-day data period)
+            const surveysPerAgentPerDay = surveys / (agents * 30);
+            const dailyVelocity = surveys / 30;
+
+            // Project future completions based on current velocity
+            const surveysIn7Days = surveys + (dailyVelocity * 7);
+            const surveysIn14Days = surveys + (dailyVelocity * 14);
+            const surveysIn30Days = surveys + (dailyVelocity * 30);
+
+            const projected7Days = Math.min((surveysIn7Days / totalVoters) * 100, 100);
+            const projected14Days = Math.min((surveysIn14Days / totalVoters) * 100, 100);
+            const projected30Days = Math.min((surveysIn30Days / totalVoters) * 100, 100);
 
             const targetCompletion = 40.0;
             const onTrack = projected30Days >= targetCompletion;
@@ -57,33 +87,42 @@ export const PredictiveInsights = () => {
             } else if (projected30Days < targetCompletion * 0.75) {
               riskLevel = 'medium';
               recommendation = 'Increase agent allocation by 20% to meet target';
+            } else if (projected30Days >= targetCompletion) {
+              riskLevel = 'low';
+              recommendation = 'On track: Maintain current pace';
             }
 
             return {
-              acNumber: c.number,
-              currentCompletion: parseFloat(currentCompletion.toFixed(1)),
-              projected7Days: parseFloat(projected7Days.toFixed(1)),
-              projected14Days: parseFloat(projected14Days.toFixed(1)),
-              projected30Days: parseFloat(projected30Days.toFixed(1)),
+              acNumber: ac.acNumber,
+              name,
+              currentCompletion: parseFloat(currentCompletion.toFixed(2)),
+              projected7Days: parseFloat(projected7Days.toFixed(2)),
+              projected14Days: parseFloat(projected14Days.toFixed(2)),
+              projected30Days: parseFloat(projected30Days.toFixed(2)),
               targetCompletion,
               onTrack,
               riskLevel,
               recommendation,
-              velocity: parseFloat(velocity.toFixed(2)),
+              velocity: parseFloat(surveysPerAgentPerDay.toFixed(2)),
+              voters: totalVoters,
+              surveys,
+              agents,
             };
-          } catch {
-            return null;
-          }
-        });
+          });
 
-        const results = await Promise.all(promises);
-        results.forEach(r => {
-          if (r) predictionData.push(r);
+        // Sort by risk level (high first) then by completion
+        predictionData.sort((a, b) => {
+          const riskOrder = { high: 0, medium: 1, low: 2 };
+          if (riskOrder[a.riskLevel] !== riskOrder[b.riskLevel]) {
+            return riskOrder[a.riskLevel] - riskOrder[b.riskLevel];
+          }
+          return a.currentCompletion - b.currentCompletion;
         });
 
         setPredictions(predictionData);
       } catch (error) {
         console.error('Error fetching prediction data:', error);
+        setPredictions([]);
       } finally {
         setIsLoading(false);
       }
@@ -106,6 +145,27 @@ export const PredictiveInsights = () => {
     );
   }
 
+  if (predictions.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold">Predictive Completion Forecasts</h2>
+          <p className="text-muted-foreground mt-1">No AC data available for predictions</p>
+        </div>
+        <Card className="p-6">
+          <p className="text-center text-muted-foreground">
+            No ACs with voter data found. Add voter data to see predictions.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  // Summary stats
+  const highRiskCount = predictions.filter(p => p.riskLevel === 'high').length;
+  const mediumRiskCount = predictions.filter(p => p.riskLevel === 'medium').length;
+  const onTrackCount = predictions.filter(p => p.onTrack).length;
+
   return (
     <div className="space-y-6">
       <div>
@@ -115,13 +175,50 @@ export const PredictiveInsights = () => {
         </p>
       </div>
 
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">High Risk</p>
+              <p className="text-2xl font-bold">{highRiskCount}</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-yellow-100 dark:bg-yellow-900/30">
+              <AlertTriangle className="h-5 w-5 text-yellow-500" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Medium Risk</p>
+              <p className="text-2xl font-bold">{mediumRiskCount}</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
+              <TrendingUp className="h-5 w-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">On Track</p>
+              <p className="text-2xl font-bold">{onTrackCount}</p>
+            </div>
+          </div>
+        </Card>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {predictions.map((prediction) => (
           <Card key={prediction.acNumber} className="p-6">
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold">AC {prediction.acNumber}</h3>
-                <p className="text-sm text-muted-foreground">Current: {prediction.currentCompletion}%</p>
+                <p className="text-sm text-muted-foreground">{prediction.name}</p>
               </div>
               <Badge
                 variant={prediction.onTrack ? 'default' : 'destructive'}
@@ -142,10 +239,22 @@ export const PredictiveInsights = () => {
                   <span className="text-muted-foreground">Progress to Target</span>
                   <span className="font-medium">{prediction.currentCompletion}%</span>
                 </div>
-                <Progress value={prediction.currentCompletion} className="h-2" />
+                <Progress value={Math.min(prediction.currentCompletion, 100)} className="h-2" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="p-2 bg-muted/50 rounded">
+                  <p className="text-xs text-muted-foreground">Voters</p>
+                  <p className="font-medium">{prediction.voters.toLocaleString()}</p>
+                </div>
+                <div className="p-2 bg-muted/50 rounded">
+                  <p className="text-xs text-muted-foreground">Surveyed</p>
+                  <p className="font-medium">{prediction.surveys.toLocaleString()}</p>
+                </div>
               </div>
 
               <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Projected Completion</p>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">7 Days</span>
                   <span className="font-medium">{prediction.projected7Days}%</span>
@@ -184,8 +293,9 @@ export const PredictiveInsights = () => {
                 <p className="text-sm">{prediction.recommendation}</p>
               </div>
 
-              <div className="text-xs text-muted-foreground">
-                Velocity: {prediction.velocity} surveys/day
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Velocity: {prediction.velocity} surveys/agent/day</span>
+                <span>Agents: {prediction.agents}</span>
               </div>
             </div>
           </Card>

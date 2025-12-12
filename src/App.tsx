@@ -37,7 +37,6 @@ const ACDetailedDashboard = lazy(() => import("@/pages/l1/ACDetailedDashboard").
 const ACAnalyticsDashboard = lazy(() => import("@/pages/l1/ACAnalyticsDashboard").then(m => ({ default: m.ACAnalyticsDashboard })));
 const ACComparison = lazy(() => import("@/pages/l1/ACComparison").then(m => ({ default: m.ACComparison })));
 const GlobalAnalytics = lazy(() => import("@/pages/l1/GlobalAnalytics").then(m => ({ default: m.GlobalAnalytics })));
-const SurveyAssignments = lazy(() => import("@/pages/l1/SurveyAssignments").then(m => ({ default: m.SurveyAssignments })));
 const ModeratorManagement = lazy(() => import("@/pages/l1/ModeratorManagement").then(m => ({ default: m.ModeratorManagement })));
 const LiveSurveyMonitor = lazy(() => import("@/pages/l1/LiveSurveyMonitor").then(m => ({ default: m.LiveSurveyMonitor })));
 const ACVoterManager = lazy(() => import("@/pages/l1/ACVoterManager").then(m => ({ default: m.ACVoterManager })));
@@ -47,6 +46,9 @@ const ACReports = lazy(() => import("@/pages/l1/ACReports").then(m => ({ default
 const L1AdvancedAnalytics = lazy(() => import("@/pages/l1/AdvancedAnalytics"));
 const SurveyForms = lazy(() => import("@/pages/l1/SurveyForms").then(m => ({ default: m.SurveyForms })));
 const L1ActivityLogs = lazy(() => import("@/pages/l1/ActivityLogs"));
+const GlobalVoterManager = lazy(() => import("@/pages/l1/GlobalVoterManager").then(m => ({ default: m.GlobalVoterManager })));
+const GlobalFamilyManager = lazy(() => import("@/pages/l1/GlobalFamilyManager").then(m => ({ default: m.GlobalFamilyManager })));
+const L1LiveBoothUpdates = lazy(() => import("@/pages/l1/LiveBoothUpdates").then(m => ({ default: m.LiveBoothUpdates })));
 
 // Lazy load L2 pages
 const L2Dashboard = lazy(() => import("@/pages/l2/Dashboard").then(m => ({ default: m.L2Dashboard })));
@@ -174,11 +176,13 @@ const AppRoutes = () => {
       <Route path="/l1/surveys" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Survey Forms"><SurveyForms /></LazyRoute></ProtectedRoute>} />
       <Route path="/l1/surveys/builder/:formId" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Form Builder"><FormBuilder /></LazyRoute></ProtectedRoute>} />
       <Route path="/l1/surveys/preview/:formId" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Form Preview"><FormPreview /></LazyRoute></ProtectedRoute>} />
-      <Route path="/l1/survey-assignments" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Survey Assignments"><SurveyAssignments /></LazyRoute></ProtectedRoute>} />
       <Route path="/l1/moderators" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Moderators"><ModeratorManagement /></LazyRoute></ProtectedRoute>} />
       <Route path="/l1/live-surveys" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Live Surveys"><LiveSurveyMonitor /></LazyRoute></ProtectedRoute>} />
       <Route path="/l1/advanced-analytics" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Advanced Analytics"><L1AdvancedAnalytics /></LazyRoute></ProtectedRoute>} />
       <Route path="/l1/activity-logs" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Activity Logs"><L1ActivityLogs /></LazyRoute></ProtectedRoute>} />
+      <Route path="/l1/live-booth-updates" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Live Booth Updates"><L1LiveBoothUpdates /></LazyRoute></ProtectedRoute>} />
+      <Route path="/l1/voters" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Voter Manager"><GlobalVoterManager /></LazyRoute></ProtectedRoute>} />
+      <Route path="/l1/families" element={<ProtectedRoute allowedRoles={['L1']}><LazyRoute pageName="Family Manager"><GlobalFamilyManager /></LazyRoute></ProtectedRoute>} />
 
       {/* L2 Routes */}
       <Route path="/l2/dashboard" element={<ProtectedRoute allowedRoles={['L2']}><LazyRoute pageName="Dashboard"><L2Dashboard /></LazyRoute></ProtectedRoute>} />

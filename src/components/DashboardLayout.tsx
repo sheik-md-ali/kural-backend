@@ -22,6 +22,7 @@ import {
   ScrollText,
   Menu,
   Map,
+  MapPin,
   Target,
   DollarSign,
   Share2,
@@ -79,6 +80,14 @@ const AppSidebar = () => {
     navigate('/login');
   };
 
+  // Extract selected AC from URL for L1 dynamic sidebar
+  const getSelectedAC = (): number | null => {
+    const match = location.pathname.match(/\/l1\/ac\/(\d+)/);
+    return match ? Number(match[1]) : null;
+  };
+
+  const selectedAC = getSelectedAC();
+
   const getMenuItems = () => {
     switch (user?.role) {
       case 'L0':
@@ -97,21 +106,42 @@ const AppSidebar = () => {
           { icon: ScrollText, label: 'Activity Logs', path: '/l0/activity-logs' },
           { icon: Settings, label: 'Settings', path: '/l0/settings' },
         ];
-      case 'L1':
-        return [
-          { icon: Home, label: 'Constituencies', path: '/l1/constituencies' },
-          { icon: BarChart3, label: 'Analytics Dashboard', path: '/l1/analytics' },
-          { icon: Grid3x3, label: 'AC Analytics Dashboard', path: '/l1/ac-analytics' },
+      case 'L1': {
+        // L1 Dynamic Sidebar - AC-specific links appear only after selecting an AC
+        const baseItems = [
+          { icon: Map, label: 'Constituencies', path: '/l1/constituencies' },
+          { icon: BarChart3, label: 'Global Analytics', path: '/l1/analytics' },
+          { icon: Grid3x3, label: 'AC Overview', path: '/l1/ac-analytics' },
           { icon: GitCompare, label: 'AC Comparison', path: '/l1/ac-comparison' },
-          { icon: TrendingUp, label: 'Advanced Analytics', path: '/l1/advanced-analytics' },
+        ];
+
+        // Global data management items (always visible with AC selector inside)
+        const dataManagementItems = [
+          { icon: Users, label: 'Voter Manager', path: '/l1/voters' },
+          { icon: Home, label: 'Family Manager', path: '/l1/families' },
+        ];
+
+        // AC-specific items (only show when an AC is selected)
+        const acSpecificItems = selectedAC ? [
+          { icon: LayoutDashboard, label: `AC ${selectedAC} Dashboard`, path: `/l1/ac/${selectedAC}` },
+          { icon: ClipboardList, label: 'Surveys', path: `/l1/ac/${selectedAC}/surveys` },
+          { icon: FileText, label: 'Reports', path: `/l1/ac/${selectedAC}/reports` },
+        ] : [];
+
+        // Management items (always visible)
+        const managementItems = [
           { icon: FileText, label: 'Survey Forms', path: '/l1/surveys' },
-          { icon: FileText, label: 'Survey Form Assignments', path: '/l1/survey-assignments' },
-          { icon: UserCog, label: 'Moderator Management', path: '/l1/moderators' },
+          { icon: Activity, label: 'Survey Manager', path: '/l1/live-surveys' },
+          { icon: MapPin, label: 'Live Booth Updates', path: '/l1/live-booth-updates' },
+          { icon: UserCog, label: 'User Management', path: '/l1/moderators' },
           { icon: Home, label: 'Booth Management', path: '/shared/booth-management' },
           { icon: UserCircle, label: 'Booth Agent Management', path: '/shared/booth-agent-management' },
-          { icon: Activity, label: 'Live Survey Monitor', path: '/l1/live-surveys' },
+          { icon: TrendingUp, label: 'Advanced Analytics', path: '/l1/advanced-analytics' },
           { icon: ScrollText, label: 'Activity Logs', path: '/l1/activity-logs' },
         ];
+
+        return [...baseItems, ...dataManagementItems, ...acSpecificItems, ...managementItems];
+      }
       case 'L2':
         return [
           { icon: LayoutDashboard, label: 'My Dashboard', path: '/l2/dashboard' },

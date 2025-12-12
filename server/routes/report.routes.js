@@ -82,21 +82,20 @@ router.get("/:acId/booth-performance", async (req, res) => {
 
     const surveyMap = new Map(surveysByBooth.map(s => [s._id, s.surveys_completed]));
 
-    // Calculate families per booth
+    // Calculate families per booth using unique familyId (camelCase field)
     const familiesByBooth = await VoterModel.aggregate([
       { $match: matchQuery },
       {
         $group: {
-          _id: {
-            booth: "$boothname",
-            address: "$address"
-          }
+          _id: "$boothname",
+          // Use $addToSet to get unique family IDs
+          uniqueFamilies: { $addToSet: "$familyId" }
         }
       },
       {
-        $group: {
-          _id: "$_id.booth",
-          total_families: { $sum: 1 }
+        $project: {
+          _id: 1,
+          total_families: { $size: "$uniqueFamilies" }
         }
       }
     ]);

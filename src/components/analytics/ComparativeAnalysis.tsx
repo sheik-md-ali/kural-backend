@@ -1,6 +1,6 @@
 import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
-import { TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Loader2, Users, Home, FileCheck, MapPin, UserCheck } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -12,115 +12,124 @@ import {
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { CONSTITUENCIES } from '@/constants/constituencies';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
+
+interface ACPerformance {
+  acNumber: number;
+  acName: string | null;
+  voters: number;
+  surveyedMembers: number;
+  families: number;
+  booths: number;
+  completion: number;
+  agents: number;
+}
 
 interface ComparisonData {
   acNumber: number;
   name: string;
-  currentPeriod: {
-    surveys: number;
-    completion: number;
-    agents: number;
-  };
-  previousPeriod: {
-    surveys: number;
-    completion: number;
-    agents: number;
-  };
-  growth: {
-    surveys: number;
-    completion: number;
-    trend: 'up' | 'down' | 'stable';
-  };
+  voters: number;
+  families: number;
+  surveys: number;
+  booths: number;
+  agents: number;
+  completion: number;
+  surveyRate: number;
+  votersPerBooth: number;
+  votersPerAgent: number;
+  rank: number;
 }
-
-const getTrendIcon = (trend: 'up' | 'down' | 'stable') => {
-  switch (trend) {
-    case 'up':
-      return <TrendingUp className="h-4 w-4 text-green-500" />;
-    case 'down':
-      return <TrendingDown className="h-4 w-4 text-red-500" />;
-    case 'stable':
-      return <Minus className="h-4 w-4 text-yellow-500" />;
-  }
-};
 
 export const ComparativeAnalysis = () => {
   const [comparisons, setComparisons] = useState<ComparisonData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [bestPerformer, setBestPerformer] = useState<{ acNumber: number; growth: number } | null>(null);
-  const [needsAttention, setNeedsAttention] = useState<{ acNumber: number; decline: number } | null>(null);
-  const [mostStable, setMostStable] = useState<{ acNumber: number } | null>(null);
+  const [bestPerformer, setBestPerformer] = useState<ComparisonData | null>(null);
+  const [needsAttention, setNeedsAttention] = useState<ComparisonData | null>(null);
+  const [topByEfficiency, setTopByEfficiency] = useState<ComparisonData | null>(null);
 
   useEffect(() => {
     const fetchComparisonData = async () => {
       try {
         setIsLoading(true);
-        const dataPromises = CONSTITUENCIES.slice(0, 10).map(async (constituency) => {
-          try {
-            const data = await api.get(`/dashboard/stats/${constituency.number}`);
-            const totalVoters = data.totalMembers || 0;
-            const currentSurveys = data.surveysCompleted || 0;
-            const currentCompletion = totalVoters > 0 ? (currentSurveys / totalVoters) * 100 : 0;
 
-            // Simulate previous period (actual would need historical data API)
-            const previousSurveys = Math.max(0, currentSurveys - Math.floor(Math.random() * 200) + 100);
-            const previousCompletion = totalVoters > 0 ? (previousSurveys / totalVoters) * 100 : 0;
+        // Use the batched ac-overview API for accurate data
+        const data = await api.get('/rbac/dashboard/ac-overview');
 
-            const surveyGrowth = previousSurveys > 0
-              ? ((currentSurveys - previousSurveys) / previousSurveys) * 100
-              : 0;
-            const completionChange = currentCompletion - previousCompletion;
+        if (!data.success || !data.acPerformance) {
+          setComparisons([]);
+          return;
+        }
 
-            let trend: 'up' | 'down' | 'stable' = 'stable';
-            if (surveyGrowth > 5) trend = 'up';
-            else if (surveyGrowth < -5) trend = 'down';
+        const comparisonData: ComparisonData[] = data.acPerformance
+          .filter((ac: ACPerformance) => ac.voters > 0)
+          .map((ac: ACPerformance, index: number) => {
+            const constituency = CONSTITUENCIES.find(c => c.number === ac.acNumber);
+            const name = ac.acName || constituency?.name || `AC ${ac.acNumber}`;
+
+            const voters = ac.voters;
+            const families = ac.families;
+            const surveys = ac.surveyedMembers;
+            const booths = ac.booths;
+            const agents = ac.agents || 0;
+            const completion = ac.completion || 0;
+
+            // Calculate derived metrics
+            const surveyRate = voters > 0 ? (surveys / voters) * 100 : 0;
+            const votersPerBooth = booths > 0 ? Math.round(voters / booths) : 0;
+            const votersPerAgent = agents > 0 ? Math.round(voters / agents) : voters;
 
             return {
-              acNumber: constituency.number,
-              name: constituency.name,
-              currentPeriod: {
-                surveys: currentSurveys,
-                completion: parseFloat(currentCompletion.toFixed(1)),
-                agents: Math.floor(Math.random() * 5) + 5,
-              },
-              previousPeriod: {
-                surveys: previousSurveys,
-                completion: parseFloat(previousCompletion.toFixed(1)),
-                agents: Math.floor(Math.random() * 5) + 5,
-              },
-              growth: {
-                surveys: parseFloat(surveyGrowth.toFixed(1)),
-                completion: parseFloat(completionChange.toFixed(1)),
-                trend,
-              },
+              acNumber: ac.acNumber,
+              name,
+              voters,
+              families,
+              surveys,
+              booths,
+              agents,
+              completion,
+              surveyRate: parseFloat(surveyRate.toFixed(2)),
+              votersPerBooth,
+              votersPerAgent,
+              rank: 0, // Will be set after sorting
             };
-          } catch {
-            return null;
-          }
+          });
+
+        // Sort by survey rate (best metric for comparison) and assign ranks
+        comparisonData.sort((a, b) => b.surveyRate - a.surveyRate);
+        comparisonData.forEach((item, index) => {
+          item.rank = index + 1;
         });
 
-        const results = (await Promise.all(dataPromises)).filter((r): r is ComparisonData => r !== null);
-        setComparisons(results);
+        setComparisons(comparisonData);
 
-        // Find best performer, needs attention, and most stable
-        if (results.length > 0) {
-          const best = results.reduce((prev, curr) =>
-            curr.growth.surveys > prev.growth.surveys ? curr : prev
-          , results[0]);
-          setBestPerformer({ acNumber: best.acNumber, growth: best.growth.surveys });
+        // Find best performer (highest survey rate)
+        if (comparisonData.length > 0) {
+          setBestPerformer(comparisonData[0]);
 
-          const worst = results.reduce((prev, curr) =>
-            curr.growth.surveys < prev.growth.surveys ? curr : prev
-          , results[0]);
-          setNeedsAttention({ acNumber: worst.acNumber, decline: worst.growth.surveys });
+          // Find needs attention (lowest survey rate)
+          setNeedsAttention(comparisonData[comparisonData.length - 1]);
 
-          const stable = results.reduce((prev, curr) =>
-            Math.abs(curr.growth.surveys) < Math.abs(prev.growth.surveys) ? curr : prev
-          , results[0]);
-          setMostStable({ acNumber: stable.acNumber });
+          // Find most efficient (best voters per agent ratio - lower is better if agents > 0)
+          const withAgents = comparisonData.filter(c => c.agents > 0);
+          if (withAgents.length > 0) {
+            const efficient = withAgents.reduce((prev, curr) =>
+              curr.votersPerAgent < prev.votersPerAgent ? curr : prev
+            );
+            setTopByEfficiency(efficient);
+          }
         }
       } catch (error) {
         console.error('Error fetching comparison data:', error);
+        setComparisons([]);
       } finally {
         setIsLoading(false);
       }
@@ -133,7 +142,7 @@ export const ComparativeAnalysis = () => {
     return (
       <div className="space-y-6">
         <div>
-          <h2 className="text-2xl font-bold">Period-over-Period Comparison</h2>
+          <h2 className="text-2xl font-bold">AC Performance Comparison</h2>
           <p className="text-muted-foreground mt-1">Loading comparison data...</p>
         </div>
         <Card className="p-6">
@@ -145,32 +154,132 @@ export const ComparativeAnalysis = () => {
     );
   }
 
+  if (comparisons.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold">AC Performance Comparison</h2>
+          <p className="text-muted-foreground mt-1">No data available for comparison</p>
+        </div>
+        <Card className="p-6">
+          <p className="text-center text-muted-foreground">
+            No ACs with voter data found. Add voter data to see comparisons.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  // Prepare chart data
+  const chartData = comparisons.map(c => ({
+    name: `AC ${c.acNumber}`,
+    'Survey Rate %': c.surveyRate,
+    'Voters (k)': Math.round(c.voters / 1000 * 10) / 10,
+    'Surveys': c.surveys,
+  }));
+
+  // Summary statistics
+  const totalVoters = comparisons.reduce((sum, c) => sum + c.voters, 0);
+  const totalSurveys = comparisons.reduce((sum, c) => sum + c.surveys, 0);
+  const avgSurveyRate = totalVoters > 0 ? (totalSurveys / totalVoters) * 100 : 0;
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Period-over-Period Comparison</h2>
+        <h2 className="text-2xl font-bold">AC Performance Comparison</h2>
         <p className="text-muted-foreground mt-1">
-          Compare current month vs previous month performance
+          Compare performance metrics across all Assembly Constituencies
         </p>
       </div>
 
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
+              <TrendingUp className="h-5 w-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Best Performer</p>
+              <p className="text-xl font-bold">AC {bestPerformer?.acNumber || '-'}</p>
+              <p className="text-xs text-muted-foreground">
+                {bestPerformer ? `${bestPerformer.surveyRate}% survey rate` : 'No data'}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30">
+              <TrendingDown className="h-5 w-5 text-red-500" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Needs Attention</p>
+              <p className="text-xl font-bold">AC {needsAttention?.acNumber || '-'}</p>
+              <p className="text-xs text-muted-foreground">
+                {needsAttention ? `${needsAttention.surveyRate}% survey rate` : 'No data'}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+              <UserCheck className="h-5 w-5 text-blue-500" />
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Best Agent Efficiency</p>
+              <p className="text-xl font-bold">AC {topByEfficiency?.acNumber || '-'}</p>
+              <p className="text-xs text-muted-foreground">
+                {topByEfficiency ? `${topByEfficiency.votersPerAgent} voters/agent` : 'No data'}
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Chart */}
+      <Card className="p-6">
+        <h3 className="font-semibold mb-4">Survey Rate Comparison</h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="Survey Rate %" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      {/* Detailed Table */}
       <Card>
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Rank</TableHead>
               <TableHead>AC</TableHead>
-              <TableHead className="text-right">Current Surveys</TableHead>
-              <TableHead className="text-right">Previous Surveys</TableHead>
-              <TableHead className="text-right">Growth</TableHead>
-              <TableHead className="text-right">Current %</TableHead>
-              <TableHead className="text-right">Previous %</TableHead>
-              <TableHead className="text-right">Change</TableHead>
-              <TableHead>Trend</TableHead>
+              <TableHead className="text-right">Voters</TableHead>
+              <TableHead className="text-right">Families</TableHead>
+              <TableHead className="text-right">Surveys</TableHead>
+              <TableHead className="text-right">Survey Rate</TableHead>
+              <TableHead className="text-right">Booths</TableHead>
+              <TableHead className="text-right">Agents</TableHead>
+              <TableHead className="text-right">Voters/Booth</TableHead>
+              <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {comparisons.map((comparison) => (
               <TableRow key={comparison.acNumber}>
+                <TableCell>
+                  <Badge variant={comparison.rank <= 3 ? 'default' : 'secondary'}>
+                    #{comparison.rank}
+                  </Badge>
+                </TableCell>
                 <TableCell>
                   <div>
                     <p className="font-medium">AC {comparison.acNumber}</p>
@@ -178,49 +287,44 @@ export const ComparativeAnalysis = () => {
                   </div>
                 </TableCell>
                 <TableCell className="text-right font-medium">
-                  {comparison.currentPeriod.surveys.toLocaleString()}
-                </TableCell>
-                <TableCell className="text-right text-muted-foreground">
-                  {comparison.previousPeriod.surveys.toLocaleString()}
+                  {comparison.voters.toLocaleString()}
                 </TableCell>
                 <TableCell className="text-right">
-                  <span
-                    className={
-                      comparison.growth.surveys > 0
-                        ? 'text-green-500'
-                        : comparison.growth.surveys < 0
-                        ? 'text-red-500'
-                        : 'text-yellow-500'
-                    }
-                  >
-                    {comparison.growth.surveys > 0 ? '+' : ''}
-                    {comparison.growth.surveys.toFixed(1)}%
-                  </span>
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {comparison.currentPeriod.completion}%
-                </TableCell>
-                <TableCell className="text-right text-muted-foreground">
-                  {comparison.previousPeriod.completion}%
+                  {comparison.families.toLocaleString()}
                 </TableCell>
                 <TableCell className="text-right">
-                  <span
-                    className={
-                      comparison.growth.completion > 0
-                        ? 'text-green-500'
-                        : comparison.growth.completion < 0
-                        ? 'text-red-500'
-                        : 'text-yellow-500'
-                    }
-                  >
-                    {comparison.growth.completion > 0 ? '+' : ''}
-                    {comparison.growth.completion.toFixed(1)}%
+                  {comparison.surveys.toLocaleString()}
+                </TableCell>
+                <TableCell className="text-right">
+                  <span className={
+                    comparison.surveyRate >= 1 ? 'text-green-500' :
+                    comparison.surveyRate >= 0.1 ? 'text-yellow-500' : 'text-red-500'
+                  }>
+                    {comparison.surveyRate}%
                   </span>
+                </TableCell>
+                <TableCell className="text-right">
+                  {comparison.booths}
+                </TableCell>
+                <TableCell className="text-right">
+                  {comparison.agents}
+                </TableCell>
+                <TableCell className="text-right">
+                  {comparison.votersPerBooth}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    {getTrendIcon(comparison.growth.trend)}
-                    <span className="text-sm capitalize">{comparison.growth.trend}</span>
+                    {comparison.surveyRate >= avgSurveyRate ? (
+                      <>
+                        <TrendingUp className="h-4 w-4 text-green-500" />
+                        <span className="text-sm text-green-500">Above Avg</span>
+                      </>
+                    ) : (
+                      <>
+                        <TrendingDown className="h-4 w-4 text-red-500" />
+                        <span className="text-sm text-red-500">Below Avg</span>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>
@@ -229,46 +333,32 @@ export const ComparativeAnalysis = () => {
         </Table>
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <TrendingUp className="h-8 w-8 text-green-500" />
-            <div>
-              <p className="text-sm text-muted-foreground">Best Performer</p>
-              <p className="text-xl font-bold">AC {bestPerformer?.acNumber || '-'}</p>
-            </div>
+      {/* Summary Stats */}
+      <Card className="p-6">
+        <h3 className="font-semibold mb-4">Overall Statistics</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="text-center p-3 bg-muted/50 rounded-lg">
+            <Users className="h-5 w-5 mx-auto mb-2 text-muted-foreground" />
+            <p className="text-2xl font-bold">{totalVoters.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">Total Voters</p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {bestPerformer ? `+${bestPerformer.growth.toFixed(1)}% survey growth this period` : 'No data available'}
-          </p>
-        </Card>
-
-        <Card className="p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <TrendingDown className="h-8 w-8 text-red-500" />
-            <div>
-              <p className="text-sm text-muted-foreground">Needs Attention</p>
-              <p className="text-xl font-bold">AC {needsAttention?.acNumber || '-'}</p>
-            </div>
+          <div className="text-center p-3 bg-muted/50 rounded-lg">
+            <FileCheck className="h-5 w-5 mx-auto mb-2 text-muted-foreground" />
+            <p className="text-2xl font-bold">{totalSurveys.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">Total Surveys</p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {needsAttention ? `${needsAttention.decline.toFixed(1)}% change in surveys` : 'No data available'}
-          </p>
-        </Card>
-
-        <Card className="p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <Minus className="h-8 w-8 text-yellow-500" />
-            <div>
-              <p className="text-sm text-muted-foreground">Most Stable</p>
-              <p className="text-xl font-bold">AC {mostStable?.acNumber || '-'}</p>
-            </div>
+          <div className="text-center p-3 bg-muted/50 rounded-lg">
+            <TrendingUp className="h-5 w-5 mx-auto mb-2 text-muted-foreground" />
+            <p className="text-2xl font-bold">{avgSurveyRate.toFixed(2)}%</p>
+            <p className="text-xs text-muted-foreground">Avg Survey Rate</p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Consistent performance maintained
-          </p>
-        </Card>
-      </div>
+          <div className="text-center p-3 bg-muted/50 rounded-lg">
+            <MapPin className="h-5 w-5 mx-auto mb-2 text-muted-foreground" />
+            <p className="text-2xl font-bold">{comparisons.length}</p>
+            <p className="text-xs text-muted-foreground">ACs with Data</p>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 };
