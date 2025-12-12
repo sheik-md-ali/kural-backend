@@ -1876,6 +1876,7 @@ router.get("/booth-agents", isAuthenticated, canManageBoothAgents, validateACAcc
 
     const agents = await User.find(query)
       .select("-password -passwordHash")
+      .populate("assignedBoothId", "boothName boothCode booth_id boothNumber ac_id")
       .sort({ name: 1 });
 
     // If filtering by assigned status, check booth assignments
@@ -1902,10 +1903,43 @@ router.get("/booth-agents", isAuthenticated, canManageBoothAgents, validateACAcc
       });
     }
 
+    // Transform agents to include booth info in a format the frontend expects
+    const transformedAgents = filteredAgents.map(agent => {
+      const agentObj = agent.toObject ? agent.toObject() : agent;
+
+      // Get booth info from populated assignedBoothId or from booth_id string
+      let boothName = null;
+      let boothNo = null;
+      let boothId = null;
+
+      if (agentObj.assignedBoothId && typeof agentObj.assignedBoothId === 'object') {
+        // Populated booth reference
+        boothName = agentObj.assignedBoothId.boothName;
+        boothNo = agentObj.assignedBoothId.boothNumber || agentObj.assignedBoothId.boothCode;
+        boothId = agentObj.assignedBoothId.booth_id || agentObj.assignedBoothId.boothCode;
+      } else if (agentObj.booth_id) {
+        // Extract booth number from booth_id string (e.g., "BOOTH1-101" -> "1")
+        const match = agentObj.booth_id.match(/^BOOTH(\d+)-(\d+)$/);
+        if (match) {
+          boothNo = match[1];
+          boothId = agentObj.booth_id;
+        } else {
+          boothId = agentObj.booth_id;
+        }
+      }
+
+      return {
+        ...agentObj,
+        boothName: boothName,
+        boothNo: boothNo,
+        boothId: boothId,
+      };
+    });
+
     res.json({
       success: true,
-      count: filteredAgents.length,
-      agents: filteredAgents,
+      count: transformedAgents.length,
+      agents: transformedAgents,
     });
   } catch (error) {
     console.error("Error fetching booth agents:", error);
